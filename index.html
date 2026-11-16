@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no" />
+  <title>Seedream Studio · 个人生图 Agent</title>
+
+  <!-- PWA & iOS Home Screen Meta -->
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <meta name="theme-color" content="#111116" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Seedream" />
+  <link rel="apple-touch-icon" sizes="180x180" href="./static/icons/apple-touch-icon.png" />
+  <link rel="icon" type="image/svg+xml" href="./static/icons/icon.svg" />
+
+  <link rel="stylesheet" href="./static/styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <!-- Top Header -->
+    <header class="topbar">
+      <div class="brand">
+        <img src="./static/icons/icon.svg" alt="Seedream" class="brand-icon" />
+        <div class="brand-text">
+          <span class="brand-title">Seedream Studio</span>
+          <span class="brand-badge">5.5</span>
+        </div>
+      </div>
+
+      <div class="segmented-control workspace-nav" role="tablist" aria-label="工作区切换">
+        <button type="button" class="seg-btn active" data-workspace="studio">🎨 生图工作台</button>
+        <button type="button" class="seg-btn" data-workspace="writing">✍️ 自由写作</button>
+      </div>
+
+      <div class="topbar-actions">
+        <button id="balancePill" class="pill-btn balance-pill" type="button" title="点击刷新生图余额">
+          <span class="dot" id="balanceDot"></span>
+          <span id="balanceText">检查中...</span>
+        </button>
+        <button id="veniceBalancePill" class="pill-btn balance-pill hidden" type="button" title="Venice.ai 写作/识图余额（点击刷新）">
+          <span class="dot" id="veniceDot"></span>
+          <span id="veniceBalanceText">Venice</span>
+        </button>
+        <button id="openPhoneBtn" class="ghost-btn" type="button">
+          <span class="btn-icon">📱</span>
+          <span class="btn-label">手机使用</span>
+        </button>
+        <button id="openSettingsBtn" class="ghost-btn" type="button">
+          <span class="btn-icon">⚙️</span>
+          <span class="btn-label">设置</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Onboarding Banner when API key is missing -->
+    <section id="setupBanner" class="setup-banner hidden">
+      <div class="setup-banner-content">
+        <div>
+          <strong>👋 欢迎使用！只需 1 步即可开始生图</strong>
+          <p>请填入你的 SpicyAPI 密钥（<code>sk-spicy-...</code>），保存后即可直接生图，无需每次登录官网。</p>
+        </div>
+        <button id="bannerOpenSettingsBtn" class="primary-btn small-btn" type="button">立即配置 Key</button>
+      </div>
+    </section>
+
+    <!-- Main Studio Layout -->
+    <main id="studioView" class="studio-grid">
+      <!-- Left: Control Panel -->
+      <section class="panel control-panel">
+        <!-- Mode Switcher -->
+        <div class="segmented-control" role="tablist" aria-label="生成模式">
+          <button type="button" class="seg-btn active" data-mode="text-to-image">文生图</button>
+          <button type="button" class="seg-btn" data-mode="edit">多图编辑</button>
+          <button type="button" class="seg-btn" data-mode="layer-decomposition">图层拆解</button>
+        </div>
+
+        <!-- Reference Images (Edit / Layer modes) -->
+        <div id="refSection" class="field-group hidden">
+          <div class="field-header">
+            <label id="refLabel">参考图片（最多 10 张）</label>
+            <span class="field-hint" id="refHint">按顺序编号为 Image 1, Image 2...</span>
+          </div>
+
+          <div id="dropZone" class="drop-zone">
+            <input id="fileInput" type="file" accept="image/*" multiple hidden />
+            <div class="drop-zone-inner">
+              <span class="drop-icon">🖼️</span>
+              <span class="drop-title">点击选择或拖拽图片到这里</span>
+              <span class="drop-sub">支持 PNG / JPEG / WebP（iPhone 可直接从相册选取）</span>
+            </div>
+          </div>
+
+          <div id="refGrid" class="ref-grid"></div>
+        </div>
+
+        <!-- Prompt Input -->
+        <div class="field-group">
+          <div class="field-header">
+            <label for="promptInput" id="promptLabel">画面描述（Prompt）</label>
+            <span class="char-count" id="charCount">0 / 5000</span>
+          </div>
+          <div class="prompt-input-wrap">
+            <textarea
+              id="promptInput"
+              rows="4"
+              maxlength="5000"
+              placeholder="描述你想生成的画面细节、主体、光线、构图或文字内容（支持中英文提示词）..."
+            ></textarea>
+            <div id="promptLoadingMask" class="prompt-loading-pill hidden">
+              <span class="writing-ring-spinner small"></span>
+              <span id="promptLoadingText">AI 正在构思扩写...</span>
+            </div>
+          </div>
+
+          <!-- AI Prompt Enhancer Toolbar -->
+          <div class="enhance-bar">
+            <div class="enhance-controls">
+              <select id="enhanceStyleSelect" class="mini-select" title="扩写风格">
+                <option value="none" selected>风格：默认不预设（自由扩展）</option>
+                <option value="cinematic">风格：电影质感</option>
+                <option value="precise">风格：忠实原意补全细节</option>
+                <option value="historical">风格：历史纪实 / 战争写实</option>
+                <option value="design">风格：海报与文字排版</option>
+              </select>
+              <select id="enhanceLangSelect" class="mini-select" title="输出提示词语言">
+                <option value="en">输出：英文</option>
+                <option value="zh">输出：中文</option>
+              </select>
+            </div>
+            <div class="enhance-actions">
+              <button id="undoEnhanceBtn" type="button" class="ghost-btn small-btn hidden">↶ 撤销</button>
+              <button id="enhancePromptBtn" type="button" class="secondary-btn small-btn enhance-btn">
+                <span class="btn-spinner hidden" id="enhanceSpinner"></span>
+                <span id="enhanceBtnLabel">✨ AI 扩写提示词</span>
+              </button>
+            </div>
+          </div>
+          <p id="enhanceHint" class="field-hint hidden" style="margin: 6px 0 0;"></p>
+
+          <!-- Quick Prompt Chips -->
+          <div class="preset-row" id="presetRow"></div>
+        </div>
+
+        <!-- Aspect Ratio -->
+        <div id="ratioGroup" class="field-group">
+          <div class="field-header">
+            <label>画幅比例</label>
+            <span class="field-hint" id="ratioNote">编辑模式需手动选择输出比例</span>
+          </div>
+          <div class="ratio-grid" id="ratioGrid"></div>
+        </div>
+
+        <!-- Resolution & Format & Background -->
+        <div class="two-col-fields">
+          <div class="field-group">
+            <div class="field-header">
+              <label>分辨率</label>
+            </div>
+            <div class="chip-row" id="resolutionRow"></div>
+          </div>
+
+          <div class="field-group">
+            <div class="field-header">
+              <label>文件格式</label>
+            </div>
+            <div class="chip-row" id="formatRow"></div>
+          </div>
+        </div>
+
+        <div id="backgroundGroup" class="field-group">
+          <div class="field-header">
+            <label>背景模式</label>
+            <span class="field-hint" id="bgHint">透明底需要搭配 PNG 格式</span>
+          </div>
+          <div class="chip-row" id="bgRow"></div>
+        </div>
+
+        <!-- Num Outputs (Layer Decomposition only) -->
+        <div id="layerCountGroup" class="field-group hidden">
+          <div class="field-header">
+            <label for="numOutputsRange">最大返回图片数（含底图）</label>
+            <span class="badge-value" id="numOutputsVal">10</span>
+          </div>
+          <input id="numOutputsRange" type="range" min="2" max="100" value="10" class="range-slider" />
+        </div>
+
+        <!-- Quote & Generate Action -->
+        <div class="submit-footer">
+          <div class="quote-bar">
+            <span id="quoteText">预估费用：$0.035 USD</span>
+            <button id="refreshQuoteBtn" type="button" class="link-btn">实时询价</button>
+          </div>
+
+          <button id="generateBtn" type="button" class="primary-btn submit-btn">
+            <span class="btn-spinner hidden" id="generateSpinner"></span>
+            <span id="generateBtnLabel">开始生成</span>
+          </button>
+          <p id="formError" class="error-banner hidden"></p>
+        </div>
+      </section>
+
+      <!-- Right: Preview & Gallery -->
+      <section class="panel workspace-panel">
+        <!-- Active / Featured Result Stage -->
+        <div class="stage-card">
+          <div class="stage-header">
+            <div>
+              <h2 class="stage-title">实时画布</h2>
+              <p id="stageSubtitle" class="stage-subtitle">生成的图片会自动保存到本地，不会过期丢失</p>
+            </div>
+            <div id="stageStatusBadge" class="status-pill hidden"></div>
+          </div>
+
+          <div id="stageBody" class="stage-body empty">
+            <div class="empty-state">
+              <div class="empty-orb">✦</div>
+              <p>在左侧输入画面描述，点击「开始生成」</p>
+              <span>生成完成后会自动保存在本机 <code>data/outputs/</code> 目录</span>
+            </div>
+          </div>
+
+          <div id="stageActions" class="stage-actions hidden">
+            <button id="stageSaveBtn" type="button" class="secondary-btn">⬇️ 保存原图</button>
+            <button id="stageShareBtn" type="button" class="secondary-btn hidden">📲 存到手机相册</button>
+            <button id="stageEditBtn" type="button" class="secondary-btn">✏️ 送去编辑</button>
+            <button id="stageLayerBtn" type="button" class="secondary-btn">🧩 拆解图层</button>
+            <button id="stageWriteBtn" type="button" class="secondary-btn">✍️ 发去写作</button>
+            <button id="stageReuseBtn" type="button" class="ghost-btn small-btn">↺ 复用提示词</button>
+          </div>
+        </div>
+
+        <!-- History Gallery -->
+        <div class="gallery-section">
+          <div class="gallery-header">
+            <h3>本地生成记录 <span id="historyCount" class="count-chip">0</span></h3>
+            <button id="refreshHistoryBtn" type="button" class="link-btn">刷新</button>
+          </div>
+          <div id="historyGrid" class="history-grid"></div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Uncensored Writing + Vision Workspace -->
+    <main id="writingView" class="writing-grid hidden">
+      <aside class="panel writing-sidebar">
+        <div class="writing-side-head">
+          <button id="newWritingBtn" type="button" class="primary-btn full-btn">＋ 新建写作对话</button>
+        </div>
+
+        <div class="field-group compact-field">
+          <label for="writingModelSelect">写作 / 识图模型</label>
+          <select id="writingModelSelect" class="full-select"></select>
+        </div>
+
+        <div class="field-group compact-field">
+          <label for="writingPersonaSelect">创作模式 / 角色预设</label>
+          <select id="writingPersonaSelect" class="full-select"></select>
+        </div>
+
+        <details class="writing-system-details">
+          <summary>自定义系统设定（可选）</summary>
+          <textarea id="writingCustomSystem" rows="3" placeholder="例如：请用冷峻写实的第三人称视角叙述，保持人物性格连贯，不要输出额外解释..."></textarea>
+        </details>
+
+        <div class="writing-sessions-wrap">
+          <div class="field-header" style="margin-bottom:6px;">
+            <label>历史写作对话</label>
+            <span id="writingSessionCount" class="count-chip">0</span>
+          </div>
+          <div id="writingSessionList" class="writing-session-list"></div>
+        </div>
+      </aside>
+
+      <section class="panel writing-main">
+        <div class="writing-topbar">
+          <div>
+            <h2 id="writingTitle" class="stage-title" style="margin:0;">自由写作（支持看图创作）</h2>
+            <p id="writingSubtitle" class="stage-subtitle">完全无审查 · 原生识图（可发 1–4 张参考图，多轮持续记住上下文）</p>
+          </div>
+          <button id="writingConfigWarn" type="button" class="status-pill running hidden">⚠️ 点此填入 Venice Key</button>
+        </div>
+
+        <div id="writingMessages" class="writing-messages">
+          <div class="empty-state">
+            <div class="empty-orb">✍️</div>
+            <p>发送剧情、人物设定、历史题材，或附带参考图直接看图写作</p>
+            <span>写完的画面描述可点「🎨 去画图」一键送到 Seedream 5.5 出图</span>
+          </div>
+        </div>
+
+        <div id="writingError" class="error-banner hidden" style="margin: 0 16px 8px;"></div>
+
+        <div class="writing-composer">
+          <div id="writingAttachPreview" class="writing-attach-preview hidden"></div>
+          <div class="writing-quick-row" id="writingQuickRow"></div>
+          <div class="writing-input-row">
+            <input id="writingFileInput" type="file" accept="image/*" multiple class="hidden" />
+            <button id="writingAttachBtn" type="button" class="secondary-btn writing-icon-btn" title="上传参考图（最多 4 张，模型可直接看图）">🖼️ 配图</button>
+            <textarea id="writingInput" rows="2" placeholder="输入创作要求、剧情走向或针对配图提问...（Enter 换行，Ctrl/⌘+Enter 发送）"></textarea>
+            <button id="writingSendBtn" type="button" class="primary-btn writing-send-btn">
+              <span class="btn-spinner hidden" id="writingSpinner"></span>
+              <span id="writingSendLabel">发送</span>
+            </button>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Settings Modal -->
+  <div id="settingsModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3 id="settingsTitle">⚙️ API 连接与模型设置</h3>
+        <button type="button" class="icon-close" data-close="settingsModal">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="guide-box">
+          <strong>如何获取 API Key（只需做一次）：</strong>
+          <ol>
+            <li>打开 <a href="https://spicyapi.ai/console/keys" target="_blank" rel="noopener">SpicyAPI → API keys 控制台 ↗</a></li>
+            <li>点击 <strong>Create key</strong>，名称随便填（例如 <code>my-agent</code>），可在 Advanced 里设置每日消费上限保护余额</li>
+            <li>复制 <code>sk-spicy-...</code> 开头的密钥，粘贴到下面并点击保存</li>
+          </ol>
+        </div>
+
+        <div class="field-group">
+          <label for="apiKeyInput">SpicyAPI Key</label>
+          <input id="apiKeyInput" type="password" autocomplete="off" placeholder="sk-spicy-..." />
+          <span id="currentKeyMask" class="field-hint">当前状态：未配置</span>
+        </div>
+
+        <div class="field-group">
+          <label for="baseUrlInput">API 地址（默认无需修改）</label>
+          <input id="baseUrlInput" type="url" value="https://api.spicyapi.ai/api/v1" />
+        </div>
+
+        <hr class="modal-divider" />
+
+        <div class="field-group">
+          <div class="field-header">
+            <label>✨ 无审查写作 / 识图扩写模型</label>
+          </div>
+          <p class="field-hint" style="margin: 0 0 10px;">
+            同时用于「✍️ 自由写作」对话与「✨ AI 扩写提示词（带参考图时自动看图识别细节）」。推荐 Venice.ai，充值永不过期、真无审查且原生支持识图。
+          </p>
+
+          <div class="segmented-control modal-tabs three-tabs" role="tablist" style="margin-bottom: 12px;">
+            <button type="button" class="seg-btn active" data-llm-provider="venice">Venice.ai（推荐）</button>
+            <button type="button" class="seg-btn" data-llm-provider="spicyapi">SpicyAPI</button>
+            <button type="button" class="seg-btn" data-llm-provider="custom">其他自定义</button>
+          </div>
+
+          <div id="llmVenicePane">
+            <div class="guide-box" style="margin-bottom: 10px; font-size: 0.82rem;">
+              <strong>如何获取 Venice API Key：</strong>
+              <ol>
+                <li>打开 <a href="https://venice.ai/settings/api" target="_blank" rel="noopener">Venice.ai → API Settings ↗</a></li>
+                <li>点击 <strong>「生成金鑰 / Generate API Key」</strong>，选择 Inference 权限后复制粘贴到下方保存（余额永不过期）。</li>
+              </ol>
+            </div>
+            <div class="field-group" style="margin-bottom: 10px;">
+              <label for="llmVeniceModelSelect" style="font-size:0.82rem;">选择 Venice 模型（均支持识图 + 无审查）</label>
+              <select id="llmVeniceModelSelect" class="full-select"></select>
+            </div>
+            <div class="field-group" style="margin-bottom: 4px;">
+              <label for="llmVeniceKeyInput" style="font-size:0.82rem;">Venice API Key</label>
+              <input id="llmVeniceKeyInput" type="password" autocomplete="off" placeholder="粘贴你的 Venice API Key..." />
+              <span id="currentVeniceKeyMask" class="field-hint">当前 Venice Key：未配置</span>
+            </div>
+          </div>
+
+          <div id="llmSpicyPane" class="hidden">
+            <label for="llmSpicyModelSelect" style="font-size:0.82rem;">选择 SpicyAPI 文本模型</label>
+            <select id="llmSpicyModelSelect" class="full-select"></select>
+            <p class="field-hint" style="margin: 6px 0 0;">
+              注：SpicyAPI 直接复用上方余额，但部分模型自身仍可能拒答敏感词，且不支持部分定制参数；强烈建议切回左侧 Venice.ai。
+            </p>
+          </div>
+
+          <div id="llmCustomPane" class="hidden">
+            <div class="guide-box" style="margin-bottom: 10px; font-size: 0.8rem;">
+              <strong>可用方案（点击下方按钮一键填入地址与模型）：</strong>
+              <ol>
+                <li><strong>OpenRouter 免费路由：</strong><code>openrouter/free</code> 或 <code>dots-studio/dots-3-note-preview:free</code> 完全免费（需在 <a href="https://openrouter.ai/settings/privacy" target="_blank" rel="noopener">Privacy 设置 ↗</a> 开启允许免费模型）；<code>Dolphin Venice</code> / <code>MythoMax 13B</code> 为真无审查付费版，需要账户有少量余额。</li>
+                <li><strong>Venice.ai 无审查专线：</strong>去 <a href="https://venice.ai" target="_blank" rel="noopener">Venice.ai ↗</a> 获取 Key（每百万输出约 $0.90）。</li>
+                <li><strong>本机完全免费离线 + 真无审查 Ollama：</strong>安装 <a href="https://ollama.com" target="_blank" rel="noopener">Ollama ↗</a> 运行 <code>ollama pull dolphin3</code>，Key 留空即可。</li>
+              </ol>
+            </div>
+            <div class="preset-row" id="llmCustomPresets" style="margin: 0 0 10px;"></div>
+            <div class="field-group" style="margin-bottom: 10px;">
+              <label for="llmBaseUrlInput" style="font-size:0.82rem;">兼容 OpenAI 的 Base URL</label>
+              <input id="llmBaseUrlInput" type="url" placeholder="https://openrouter.ai/api/v1" />
+            </div>
+            <div class="field-group" style="margin-bottom: 10px;">
+              <label for="llmModelInput" style="font-size:0.82rem;">模型名称（Model ID）</label>
+              <input id="llmModelInput" type="text" placeholder="openrouter/free" />
+            </div>
+            <div class="field-group" style="margin-bottom: 4px;">
+              <label for="llmApiKeyInput" style="font-size:0.82rem;">文字 API Key（本地 Ollama 可留空）</label>
+              <input id="llmApiKeyInput" type="password" autocomplete="off" placeholder="sk-or-... / 空" />
+              <span id="currentLlmKeyMask" class="field-hint">当前文字 Key：未单独设置</span>
+            </div>
+          </div>
+        </div>
+
+        <p id="settingsFeedback" class="feedback-msg hidden"></p>
+      </div>
+      <div class="modal-foot">
+        <button id="clearKeyBtn" type="button" class="ghost-btn danger-text">清除 Key</button>
+        <button id="saveSettingsBtn" type="button" class="primary-btn">保存并测试连接</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Phone & Shortcuts Modal -->
+  <div id="phoneModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="phoneTitle">
+    <div class="modal-card wide-modal">
+      <div class="modal-head">
+        <h3 id="phoneTitle">📱 在 iPhone 桌面直接使用</h3>
+        <button type="button" class="icon-close" data-close="phoneModal">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="segmented-control modal-tabs three-tabs" role="tablist">
+          <button type="button" class="seg-btn active" data-phone-tab="cloud">☁️ 免电脑独立网站</button>
+          <button type="button" class="seg-btn" data-phone-tab="pwa">🏠 同 Wi-Fi 本机版</button>
+          <button type="button" class="seg-btn" data-phone-tab="shortcut">⚡ 快捷指令</button>
+        </div>
+
+        <!-- Tab 1: Standalone Cloud Static Website (No PC required) -->
+        <div id="phoneTabCloud" class="phone-tab-pane">
+          <div class="qr-layout">
+            <div class="qr-box" id="cloudQrBox">
+              <div class="qr-placeholder">生成二维码中...</div>
+            </div>
+            <div class="qr-info">
+              <div class="url-copy-box">
+                <span class="url-label">手机免开电脑永久网址（随时 5G/Wi-Fi 直接打开）：</span>
+                <div class="url-row">
+                  <code id="cloudUrlText">https://hsijocey.github.io/seedream-studio/</code>
+                  <button id="copyCloudUrlBtn" type="button" class="secondary-btn small-btn">复制</button>
+                </div>
+                <div id="cloudSyncBar" class="extra-urls" style="margin-top:8px;">
+                  <button id="genCloudSyncQrBtn" type="button" class="primary-btn small-btn">🔑 生成含密钥一键同步二维码（扫码免输密码）</button>
+                </div>
+              </div>
+              <ol class="step-list">
+                <li>用手机相机扫码（或直接在 iPhone Safari 打开上方网址），<strong>不需要打开电脑</strong>即可全天候生图 + 看图无审查写作。</li>
+                <li>若在电脑点击上方橙色按钮生成同步二维码，手机扫码后会自动把生图与 Venice 两个密钥存进手机浏览器本地缓存（密钥不会上传任何第三方服务器）。</li>
+                <li>在 Safari 点底部「分享」<strong>⎙</strong> → <strong>「添加到主屏幕」</strong>，即可在手机桌面变成独立 App！</li>
+              </ol>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab 2: PWA via LAN -->
+        <div id="phoneTabPwa" class="phone-tab-pane hidden">
+          <div class="qr-layout">
+            <div class="qr-box" id="qrBox">
+              <div class="qr-placeholder">生成二维码中...</div>
+            </div>
+            <div class="qr-info">
+              <div class="url-copy-box">
+                <span class="url-label">当前局域网地址：</span>
+                <div class="url-row">
+                  <code id="lanUrlText">检测中...</code>
+                  <button id="copyLanUrlBtn" type="button" class="secondary-btn small-btn">复制</button>
+                </div>
+                <div id="extraLanUrls" class="extra-urls"></div>
+              </div>
+              <ol class="step-list">
+                <li>确认你的 iPhone 和当前电脑连在<strong>同一个 Wi-Fi</strong>（若 Windows 弹窗询问网络权限，点「允许」）。</li>
+                <li>用 iPhone 自带相机扫描左侧二维码，选择用 <strong>Safari</strong> 打开。</li>
+                <li>点 Safari 底部的「分享」图标 <strong>⎙</strong> → 下滑点 <strong>「添加到主屏幕」</strong>，即可在手机桌面像原生 App 一样直接打开！</li>
+              </ol>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab 2: iPhone Shortcut -->
+        <div id="phoneTabShortcut" class="phone-tab-pane hidden">
+          <div class="guide-box">
+            <strong>为什么推荐同时配置一个苹果「快捷指令」？</strong>
+            <p>出门用 5G 流量或电脑关机时，电脑上的本地服务连不上；在 iPhone「快捷指令」里建一个 4 步指令并添加到桌面，就能<strong>随时随地直连 SpicyAPI 生图并存进相册</strong>。</p>
+          </div>
+
+          <div class="shortcut-steps">
+            <div class="shortcut-step">
+              <span class="step-num">1</span>
+              <div>
+                <strong>动作 1：要求输入（Ask for Input）</strong>
+                <p>提示设为「输入生图描述」，输入类型选「文本」。</p>
+              </div>
+            </div>
+            <div class="shortcut-step">
+              <span class="step-num">2</span>
+              <div>
+                <strong>动作 2：获取 URL 内容（Get Contents of URL）</strong>
+                <p>URL 填：<code>https://api.spicyapi.ai/api/v1/jobs/createTask?wait=60</code><br />
+                方法选 <strong>POST</strong>，Headers 添加：<br />
+                <code>Authorization</code> = <code>Bearer 你的sk-spicy-Key</code><br />
+                <code>Content-Type</code> = <code>application/json</code></p>
+                <p>请求体选 <strong>File / JSON</strong>（或直接选「请求体 -> JSON」），可用下面模板：</p>
+                <div class="code-copy-wrap">
+                  <pre id="shortcutJsonPre">{
+  "model": "bytedance/seedream-5.5/text-to-image",
+  "input": {
+    "prompt": "[把这里替换为第1步的 Provided Input]",
+    "aspect_ratio": "3:4",
+    "resolution": "2k",
+    "output_format": "png"
+  }
+}</pre>
+                  <button id="copyShortcutJsonBtn" type="button" class="secondary-btn small-btn">复制 JSON</button>
+                </div>
+              </div>
+            </div>
+            <div class="shortcut-step">
+              <span class="step-num">3</span>
+              <div>
+                <strong>动作 3：获取词典值（Get Dictionary Value）</strong>
+                <p>依次取 <code>data.output.assets</code> → 获取列表第一项 → 取 <code>url</code>（在快捷指令里可直接写点号路径 <code>data.output.assets.1.url</code>）。</p>
+              </div>
+            </div>
+            <div class="shortcut-step">
+              <span class="step-num">4</span>
+              <div>
+                <strong>动作 4：获取 URL 内容 → 保存到相册（Save to Photo Album）</strong>
+                <p>把上一步拿到的图片链接下载为图片并保存到「最近项目」，最后可在指令顶部菜单点「添加到主屏幕」。</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Lightbox Modal for Mobile/Desktop Zoom & Long-press save -->
+  <div id="lightboxModal" class="modal-backdrop hidden" role="dialog" aria-modal="true">
+    <div class="lightbox-wrap">
+      <button type="button" class="lightbox-close" data-close="lightboxModal">✕</button>
+      <img id="lightboxImg" src="" alt="Preview" />
+      <p class="lightbox-tip">提示：iPhone 用户长按图片可直接「存储到“照片”」</p>
+    </div>
+  </div>
+
+  <script src="./static/direct_api.js"></script>
+  <script src="./static/app.js"></script>
+</body>
+</html>
