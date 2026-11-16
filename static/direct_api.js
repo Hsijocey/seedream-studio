@@ -216,9 +216,18 @@
       const parsed = JSON.parse(jsonStr);
       if (parsed && typeof parsed === 'object') {
         const cur = loadConfig();
-        ['api_key', 'base_url', 'llm_provider', 'llm_model', 'llm_base_url', 'llm_api_key'].forEach((k) => {
-          if (typeof parsed[k] === 'string' && parsed[k].trim()) {
-            cur[k] = parsed[k].trim();
+        const aliasMap = {
+          a: 'api_key',
+          bu: 'base_url',
+          p: 'llm_provider',
+          m: 'llm_model',
+          lu: 'llm_base_url',
+          v: 'llm_api_key',
+        };
+        Object.entries(aliasMap).forEach(([shortKey, fullKey]) => {
+          const val = parsed[shortKey] || parsed[fullKey];
+          if (typeof val === 'string' && val.trim()) {
+            cur[fullKey] = val.trim();
           }
         });
         writeJsonStorage(STORAGE_CFG_KEY, cur);
