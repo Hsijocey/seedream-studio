@@ -566,6 +566,31 @@
         '3. If images are visually attached, inspect Image 3 body silhouette and Image 1 garments to make clothing tension and shadows anatomically coherent. Output ONLY the clean editing prompt.',
     },
     {
+      id: 'seedream-edit-anime-to-real',
+      media: 'image',
+      label: 'Seedream 5.5 · 动漫人物自然转真人摄影',
+      summary: '去二次元大眼/赛璐珞/塑料Cos感，保留图1构图动作穿搭与发型轮廓，转为真皮肤毛孔/真发丝/真实材质摄影',
+      instructions:
+        'Follow the Seedream 5.5 Anime-to-Photorealistic Human Translation Spec:\n' +
+        '1. Lead with a real-world photographic medium ("A candid real-world live-action photograph..." or "35mm editorial portrait...").\n' +
+        '2. Anatomical Translation (CRITICAL): Convert Image 1 anime/2D proportions into natural real-world human skeletal and facial anatomy (realistic human eye size, natural orbital depth, real nose bridge, realistic jaw, natural skin asymmetry) — NEVER preserve oversized cartoon eyes or pointy anime chins.\n' +
+        '3. Physical Micro-Textures: Replace 2D cel shading and flat hair clumps with skin micro-pores, natural skin imperfections, subtle subsurface scattering, intricate realistic irises, individual real hair strands with natural flyaways, authentic fabric weaves, and grounded ambient lighting/shadows matching Image 1 scene, pose, outfit, and expression.\n' +
+        '4. Anti-Plastic Exclusions: Explicitly instruct NOT to leave anime linework, cel shading, 3D CGI smoothness, doll symmetry, airbrushed skin, or shiny synthetic cosplay wig texture. Output ONLY the clean editing prompt.',
+    },
+    {
+      id: 'seedream-edit-anime-to-real-face2',
+      media: 'image',
+      label: 'Seedream 5.5 · 图1动漫转真人 + 换脸图2',
+      summary: '图1场景/姿势/服饰/发型全转为真实电影感摄影，人物面部严锁换成图2真实五官骨相，严防二次元大眼或贴图违和感',
+      instructions:
+        'Follow the Seedream 5.5 Anime-to-Real Scene Translation + Real Face Replacement Spec:\n' +
+        '1. Explicit Role Assignment:\n' +
+        '   - Image 1 (Anime Scene, Pose, Hair Silhouette, Outfit & Lighting): Translate the ENTIRE anime world, pose, framing, outfit fabrics, hairstyle silhouette, and lighting environment from Image 1 into authentic real-world live-action photography with real cloth textures, real ambient shadows, and individual natural hair strands (avoiding synthetic cosplay wig sheen).\n' +
+        '   - Image 2 (Real Face Identity Lock): Replace the anime character face with the exact real human face, bone structure, five facial features (eyes, eyebrows, nose, lips, jawline), and authentic skin texture/micro-pores from Image 2.\n' +
+        '2. Integration & Anti-Anime Guard: Preserve Image 2 recognizable real human likeness completely unchanged while adapting lighting highlights, skin tone warmth, and head tilt naturally into Image 1 photographed scene. Explicitly forbid keeping anime eyes, 2D facial geometry, cel shading, 3D CGI render look, or sticker-like face pasting.\n' +
+        '3. If images are visually attached, inspect Image 1 outfit/hair/lighting and Image 2 features to craft a cohesive, grounded photorealistic prompt. Output ONLY the clean editing prompt.',
+    },
+    {
       id: 'seedance-cinematic',
       media: 'video',
       label: 'Seedance 2.5 / 2.0 · 电影物理运镜公式',
