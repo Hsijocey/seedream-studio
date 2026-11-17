@@ -536,26 +536,97 @@
     }
   }
 
-  async function fetchWithNetHandling(url, fetchOpts, { label = '网络请求', retries = 0 } = {}) {
+  const FORBIDDEN_BROWSER_HEADERS = new Set(['content-length', 'host', 'origin', 'user-agent', 'connection']);
+
+  function sanitizeBrowserHeaders(headersObj) {
+    const out = {};
+    if (!headersObj || typeof headersObj !== 'object') return out;
+    Object.entries(headersObj).forEach(([k, v]) => {
+      if (v === undefined || v === null) return;
+      if (FORBIDDEN_BROWSER_HEADERS.has(String(k).toLowerCase())) return;
+      out[k] = String(v);
+    });
+    return out;
+  }
+
+  function xhrRequest(url, { method = 'GET', headers = {}, body = undefined, timeoutMs = 35000 } = {}) {
+    return new Promise((resolve, reject) => {
+      if (typeof XMLHttpRequest === 'undefined') {
+        reject(new TypeError('XMLHttpRequest unavailable'));
+        return;
+      }
+      const xhr = new XMLHttpRequest();
+      xhr.open(method, url, true);
+      xhr.timeout = timeoutMs;
+      Object.entries(sanitizeBrowserHeaders(headers)).forEach(([k, v]) => {
+        try {
+          xhr.setRequestHeader(k, v);
+        } catch {
+          // ignore browser-restricted headers
+        }
+      });
+      xhr.onload = () => {
+        const textVal = xhr.responseText || '';
+        resolve({
+          ok: xhr.status >= 200 && xhr.status < 300,
+          status: xhr.status,
+          headers: { get: (name) => xhr.getResponseHeader(name) },
+          text: async () => textVal,
+          json: async () => JSON.parse(textVal || '{}'),
+        });
+      };
+      xhr.onerror = () => reject(new TypeError('Load failed (XHR)'));
+      xhr.ontimeout = () => reject(new Error('请求超时'));
+      xhr.onabort = () => reject(new Error('请求已取消'));
+      xhr.send(body === undefined ? null : body);
+    });
+  }
+
+  async function fetchWithNetHandling(
+    url,
+    fetchOpts,
+    { label = '网络请求', retries = 1, timeoutMs = 35000, allowXhrFallback = false } = {}
+  ) {
     let lastErr;
     for (let attempt = 0; attempt <= retries; attempt += 1) {
+      const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
       try {
-        return await fetch(url, fetchOpts);
+        const opts = {
+          cache: 'no-store',
+          ...fetchOpts,
+          ...(controller && !fetchOpts?.signal ? { signal: controller.signal } : {}),
+        };
+        return await fetch(url, opts);
       } catch (err) {
-        lastErr = err;
+        lastErr = err?.name === 'AbortError' ? new Error('连接超时') : err;
         if (attempt < retries) {
-          await new Promise((r) => setTimeout(r, 500));
+          await new Promise((r) => setTimeout(r, 450 * (attempt + 1)));
           continue;
         }
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+    }
+    if (allowXhrFallback && typeof XMLHttpRequest !== 'undefined') {
+      try {
+        return await xhrRequest(url, {
+          method: fetchOpts?.method || 'GET',
+          headers: fetchOpts?.headers || {},
+          body: fetchOpts?.body,
+          timeoutMs,
+        });
+      } catch (xhrErr) {
+        lastErr = xhrErr;
       }
     }
     const detail = lastErr?.message || '网络连接中断';
-    throw makeApiError(`${label}失败（${detail}）。请确认手机网络正常后重试。`, 502);
+    throw makeApiError(`${label}失败（${detail}）。请检查手机网络/代理后刷新重试。`, 502);
   }
 
   async function spicyRequest(
     path,
-    { method = 'GET', apiKey, body = null, params = null, retries = null } = {}
+    { method = 'GET', apiKey, body = null, params = null, retries = null, extraHeaders = null, timeoutMs = 35000 } = {}
   ) {
     if (!apiKey) throw makeApiError('尚未配置 SpicyAPI Key，请点击右上角「⚙️ 设置」填入。', 401);
     const base = (loadConfig().base_url || DEFAULT_CFG.base_url).replace(/\/+$/, '');
@@ -564,17 +635,19 @@
       const qs = new URLSearchParams(params).toString();
       if (qs) url += `?${qs}`;
     }
-    const headers = { Authorization: `Bearer ${apiKey}` };
+    const headers = { Authorization: `Bearer ${apiKey}`, ...(extraHeaders || {}) };
     if (body !== null) headers['Content-Type'] = 'application/json';
-    const effRetries = retries !== null ? retries : method.toUpperCase() === 'GET' ? 1 : 0;
+    const upperMethod = method.toUpperCase();
+    const hasIdem = Boolean(headers['Idempotency-Key'] || headers['idempotency-key']);
+    const effRetries = retries !== null ? retries : upperMethod === 'GET' || hasIdem ? 2 : 0;
     const resp = await fetchWithNetHandling(
       url,
       {
-        method,
+        method: upperMethod,
         headers,
         body: body !== null ? JSON.stringify(body) : undefined,
       },
-      { label: `连接 SpicyAPI (${path})`, retries: effRetries }
+      { label: `连接 SpicyAPI (${path})`, retries: effRetries, timeoutMs, allowXhrFallback: true }
     );
     const json = await resp.json().catch(() => {
       throw makeApiError(`SpicyAPI 返回非 JSON 响应 (${resp.status})`, resp.status);
@@ -634,28 +707,31 @@
       method: 'POST',
       apiKey,
       body: { contentType: processed.mime, bytes: processed.blob.size },
-      retries: 1,
+      retries: 2,
     });
     const putBytes = await processed.blob.arrayBuffer();
+    const putHeaders = sanitizeBrowserHeaders(ticket.headers);
+    if (!Object.keys(putHeaders).some((k) => k.toLowerCase() === 'content-type')) {
+      putHeaders['Content-Type'] = processed.mime;
+    }
     const putResp = await fetchWithNetHandling(
       ticket.uploadUrl,
       {
         method: 'PUT',
-        headers: { 'Content-Type': processed.mime },
+        headers: putHeaders,
         body: putBytes,
       },
-      { label: '上传参考图到云存储', retries: 1 }
+      { label: '上传参考图到云存储', retries: 2, timeoutMs: 45000, allowXhrFallback: true }
     );
     if (!putResp.ok) {
       throw makeApiError(`参考图上传对象存储失败 (HTTP ${putResp.status})`, putResp.status);
     }
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
-        const res = await spicyRequest('/common/upload-commit', {
+        const res = await spicyRequest(`/files/${encodeURIComponent(ticket.fileId)}/commit`, {
           method: 'POST',
           apiKey,
-          body: { fileId: ticket.fileId },
-          retries: 1,
+          retries: 2,
         });
         const uri = res?.file?.uri || res?.uri;
         if (uri) return String(uri);
@@ -979,8 +1055,8 @@
         job.completed_at = remote.completedAt || new Date().toISOString();
       }
     } else if (state !== 'queued' && state !== 'running') {
-      job.error_code = remote.error?.code || null;
-      job.error_message = remote.error?.message || `任务状态：${state}`;
+      job.error_code = remote.error?.code || remote.errorCode || null;
+      job.error_message = remote.error?.message || remote.errorMessage || `任务状态：${state}`;
       job.completed_at = new Date().toISOString();
     }
 
@@ -1162,9 +1238,10 @@
       if ((mode === 'edit' || mode === 'layer-decomposition') && !collected.length) {
         throw makeApiError('请至少上传或选择 1 张参考图片。', 400);
       }
-      const image_uris = collected.length
-        ? await Promise.all(collected.map((c) => uploadBlobToSpicy(apiKey, c.blob, c.mime)))
-        : [];
+      const image_uris = [];
+      for (const c of collected) {
+        image_uris.push(await uploadBlobToSpicy(apiKey, c.blob, c.mime));
+      }
       const { modelId, taskInput } = buildSeedreamPayload({
         mode,
         prompt,
@@ -1181,6 +1258,8 @@
         method: 'POST',
         apiKey,
         body: { model: modelId, input: taskInput },
+        extraHeaders: { 'Idempotency-Key': localId },
+        retries: 2,
       });
       const taskId = String(remote.taskId || '');
       if (!taskId) throw makeApiError('SpicyAPI 未返回有效的 taskId。', 500);

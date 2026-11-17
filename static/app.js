@@ -153,7 +153,14 @@
     if (state.cloudMode && window.DirectApi) {
       return window.DirectApi.stream(url, options, onEvent);
     }
-    const res = await fetch(url, options);
+    let res;
+    try {
+      res = await fetch(url, options);
+    } catch {
+      const err = new Error('无法连接本地服务（请确认服务已启动或刷新重连）');
+      err.isOffline = true;
+      throw err;
+    }
     const ctype = (res.headers.get('content-type') || '').toLowerCase();
     if (!res.ok || ctype.includes('application/json')) {
       const data = await res.json().catch(() => ({ ok: false, error: `HTTP ${res.status}` }));
@@ -1571,7 +1578,10 @@
 
   async function boot() {
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('./sw.js').catch(() => {});
+      navigator.serviceWorker
+        .register('./sw.js', { updateViaCache: 'none' })
+        .then((reg) => reg.update().catch(() => {}))
+        .catch(() => {});
     }
 
     // Bind mode tabs
