@@ -524,6 +524,48 @@
         '3. Never drift away from the user intent; output ONLY the clean editing prompt.',
     },
     {
+      id: 'seedream-edit-facehair-expr1',
+      media: 'image',
+      label: 'Seedream 5.5 · 图2换脸+换发型（模仿图1表情）',
+      summary: '仅把图1头部五官与完整发型替换为图2并严格锁死一致，表情视线模仿图1，其余构图穿搭背景全保图1',
+      instructions:
+        'Follow the Seedream 5.5 Strict Multi-Image Identity & Hair Transfer Spec (Expression Mimicking Image 1):\n' +
+        '1. Explicit Role Assignment:\n' +
+        '   - Image 1 (Base Scene & Expression Reference): Strictly lock composition, camera framing, body pose, body proportions, neck/shoulders, clothing, accessories, background, shadows, and ambient lighting unchanged.\n' +
+        '   - Image 2 (Strict Face & Complete Hairstyle Reference): Replace the subject head/face in Image 1 using Image 2 exact facial bone structure, all five facial features (eyes, eyebrows, nose, lips, jawline, ears), hairline, and COMPLETE hairstyle (hair length, parting, bangs, volume, texture, and color).\n' +
+        '2. Expression Transfer Rule: Adapt Image 2 facial muscles, gaze direction, eyebrow angle, and mouth curvature to accurately mimic the facial expression in Image 1, while strictly keeping Image 2 facial likeness and full hairstyle intact.\n' +
+        '3. Anti-Bleed Lock: Explicitly instruct NOT to keep Image 1 original face or Image 1 original hairstyle. Blend neck skin tone and directional scene highlights seamlessly.\n' +
+        '4. If images are visually attached, inspect Image 2 specific hair traits and Image 1 exact expression so the output prompt names concrete details. Output ONLY the clean editing prompt.',
+    },
+    {
+      id: 'seedream-edit-facehair-keep2',
+      media: 'image',
+      label: 'Seedream 5.5 · 图2换脸+换发型（保留图2原表情）',
+      summary: '严格把图1人脸替换为图2五官+完整发型+图2自身表情神态（绝不模仿图1表情），其余构图穿搭全保图1',
+      instructions:
+        'Follow the Seedream 5.5 Strict Identity, Hair & Expression Lock Spec (Preserve Image 2 Expression):\n' +
+        '1. Explicit Role Assignment:\n' +
+        '   - Image 1 (Base Scene & Composition): Strictly keep camera framing, composition, body pose, body proportions, neck/shoulders, clothing, accessories, background, shadows, and ambient lighting completely unchanged.\n' +
+        '   - Image 2 (Strict Face, Hair & Expression Lock): Replace the face and head in Image 1 with the exact person from Image 2, keeping Image 2 facial bone structure, five facial features (eyes, eyebrows, nose, lips, jawline, ears), complete hairstyle (length, bangs, parting, texture, color), AND Image 2 own natural facial expression, eye gaze, and emotional tone completely unchanged.\n' +
+        '2. Expression Exclusion Rule: Explicitly state DO NOT mimic or copy the expression from Image 1; only orient/tilt the head subtly if needed to join naturally with Image 1 neck and match lighting.\n' +
+        '3. Anti-Bleed Lock: Explicitly forbid retaining Image 1 original face, hairstyle, or facial expression.\n' +
+        '4. If images are visually attached, accurately describe Image 2 observed hairstyle and natural expression. Output ONLY the clean editing prompt.',
+    },
+    {
+      id: 'seedream-edit-3img-face-body',
+      media: 'image',
+      label: 'Seedream 5.5 · 三图融合（图1构图 + 图2脸不变 + 图3身材）',
+      summary: '图1定构图穿搭场景，图2五官发型严锁不变，身材体态曲线精准参考图3，严防图3人脸或衣服串图',
+      instructions:
+        'Follow the Seedream 5.5 Three-Image Role-Isolated Character Fusion Spec:\n' +
+        '1. Strict 3-Image Role Assignment:\n' +
+        '   - Image 1 (Composition, Pose, Outfit & Background): Preserve the camera angle, framing, body pose, outfit style, accessories, lighting, and environment from Image 1.\n' +
+        '   - Image 2 (Facial Identity & Hair Lock): Replace the face and hair of Image 1 with Image 2 exact facial identity, five features, bone structure, and hairstyle, keeping Image 2 face completely consistent and unaltered.\n' +
+        '   - Image 3 (Body Shape & Physique Reference ONLY): Reshape the body silhouette inside Image 1 pose and clothing to match Image 3 physique proportions (shoulder width, chest/bust volume, waist curve, hip-to-thigh silhouette, torso build, and limb proportions), making Image 1 clothing fit and drape naturally over Image 3 reshaped body.\n' +
+        '2. Anti-Bleed Exclusions: Explicitly instruct NOT to copy Image 3 face, hair, clothing, pose, or background, and NOT to keep Image 1 original face.\n' +
+        '3. If images are visually attached, inspect Image 3 body silhouette and Image 1 garments to make clothing tension and shadows anatomically coherent. Output ONLY the clean editing prompt.',
+    },
+    {
       id: 'seedance-cinematic',
       media: 'video',
       label: 'Seedance 2.5 / 2.0 · 电影物理运镜公式',

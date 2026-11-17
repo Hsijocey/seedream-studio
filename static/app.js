@@ -23,12 +23,27 @@
     },
     'edit': {
       btn: '开始编辑',
-      promptLabel: '编辑指令（可用 Image 1, Image 2 指代参考图）',
+      promptLabel: '编辑指令（可用 Image 1, Image 2, Image 3 指代参考图）',
       placeholder: '例如：将 Image 1 中的人物换穿红色丝绸长裙，放在雨夜的东京街头，保持脸部五官不变。',
       presets: [
-        { label: '换装换场景', text: 'Dress the person from Image 1 in a tailored charcoal wool coat on an autumn street at sunset, warm rim lighting. Keep their face unchanged.' },
-        { label: '双图人物融合', text: 'The person from Image 1 and the person from Image 2 standing together on a candlelit rooftop at night, looking toward each other. Keep both faces unchanged.' },
-        { label: '主体+商品合成', text: 'The person from Image 1 holding the product from Image 2 in soft natural daylight, keeping the logo and product details unchanged.' },
+        {
+          label: '图2换脸+发型（模仿图1表情）',
+          templateId: 'seedream-edit-facehair-expr1',
+          text: 'Edit Image 1 using Image 2 as the strict identity and hair reference. Replace the face, head structure, all five facial features (eyes, eyebrows, nose, lips, jawline, ears), hairline, and the complete hairstyle (hair length, parting, bangs, texture, and color) of the person in Image 1 with the exact facial identity and full hairstyle from Image 2. Adapt Image 2\'s facial muscles, eye gaze direction, eyebrow tilt, and mouth shape to accurately mimic the exact facial expression shown in Image 1 while keeping Image 2\'s facial bone structure and likeness intact. Keep everything else from Image 1 strictly unchanged: exact framing, composition, camera angle, body pose, body proportions, neck and shoulders, clothing, accessories, background, shadows, and ambient lighting. Do not retain Image 1\'s original face or hair. Blend neck skin tone and lighting highlights seamlessly.',
+        },
+        {
+          label: '图2换脸+发型（不模仿图1表情）',
+          templateId: 'seedream-edit-facehair-keep2',
+          text: 'Edit Image 1 using Image 2 as the strict identity, hair, and expression reference. Replace the face, head, all five facial features (eyes, eyebrows, nose, lips, jawline, ears), hairline, and the complete hairstyle (hair length, parting, bangs, texture, and color) of the person in Image 1 with the person from Image 2. Strictly preserve Image 2\'s own natural facial expression, eye gaze direction, eyebrow posture, and mouth expression completely unchanged; do NOT mimic or copy the expression from Image 1, only tilt the head slightly if needed to fit Image 1\'s neck angle naturally. Keep everything else from Image 1 strictly unchanged: exact framing, composition, camera angle, body pose, body proportions, clothing, accessories, background, shadows, and ambient lighting. Do not retain Image 1\'s original face, hair, or expression. Match skin tone transition at the neck and scene lighting seamlessly.',
+        },
+        {
+          label: '图1构图+图2脸不变+图3身材',
+          templateId: 'seedream-edit-3img-face-body',
+          text: 'Multi-image character edit combining Image 1, Image 2, and Image 3 with strict role separation: Use Image 1 for the scene, composition, camera framing, pose, outfit, background, and lighting. Replace the person\'s head, face, five facial features, and hairstyle in Image 1 with the exact facial identity and hairstyle from Image 2, keeping Image 2\'s facial features completely unchanged and seamlessly matched to Image 1\'s lighting. Reshape the person\'s body build and physique proportions inside Image 1\'s pose and outfit to match the exact body shape of the person in Image 3 (matching Image 3\'s shoulder width, chest/bust volume, waist-to-hip curve, torso build, and limb proportions), letting Image 1\'s clothing fit and drape naturally over Image 3\'s body silhouette. Strictly keep Image 1\'s background, framing, pose, clothing design, and lighting unchanged. Do NOT transfer any face, hairstyle, clothing, or background from Image 3, and do NOT keep Image 1\'s original face.',
+        },
+        { label: '换装换场景', templateId: 'seedream-edit', text: 'Dress the person from Image 1 in a tailored charcoal wool coat on an autumn street at sunset, warm rim lighting. Keep their face unchanged.' },
+        { label: '双图人物融合', templateId: 'seedream-edit', text: 'The person from Image 1 and the person from Image 2 standing together on a candlelit rooftop at night, looking toward each other. Keep both faces unchanged.' },
+        { label: '主体+商品合成', templateId: 'seedream-edit', text: 'The person from Image 1 holding the product from Image 2 in soft natural daylight, keeping the logo and product details unchanged.' },
       ],
     },
     'layer-decomposition': {
@@ -398,6 +413,10 @@
       btn.textContent = `+ ${p.label}`;
       btn.addEventListener('click', () => {
         $('promptInput').value = p.text;
+        if (p.templateId && $('studioTemplateSelect')) {
+          $('studioTemplateSelect').value = p.templateId;
+          syncTemplateDrawer('studio');
+        }
         updateCharCount();
         updateQuotePreview();
       });
@@ -1167,10 +1186,18 @@
   async function enhancePrompt() {
     showFormError('');
     if (state.isEnhancing) return;
-    const raw = $('promptInput').value.trim();
+    const tplId = resolveEffectiveTemplateId('studio', $('studioTemplateSelect').value);
+    let raw = $('promptInput').value.trim();
     if (!raw) {
-      showFormError('请先输入几句简单画面描述，再点击 AI 扩写。');
-      return;
+      const matchedPreset = (MODE_META.edit?.presets || []).find((p) => p.templateId === tplId);
+      if (matchedPreset && state.refs.length > 0) {
+        raw = matchedPreset.text;
+        $('promptInput').value = raw;
+        updateCharCount();
+      } else {
+        showFormError('请先输入几句简单画面描述，再点击 AI 扩写。');
+        return;
+      }
     }
 
     state.isEnhancing = true;
@@ -1183,7 +1210,6 @@
     hintEl.classList.add('hidden');
 
     const prevDraft = $('promptInput').value;
-    const tplId = resolveEffectiveTemplateId('studio', $('studioTemplateSelect').value);
     const customTpl = $('studioTemplateEditor')?.value?.trim() || '';
     let streamedText = '';
     let gotFirstDelta = false;
@@ -2661,7 +2687,29 @@
     $('generateBtn').addEventListener('click', submitGeneration);
 
     // Studio template drawer bindings
-    $('studioTemplateSelect')?.addEventListener('change', () => syncTemplateDrawer('studio'));
+    $('studioTemplateSelect')?.addEventListener('change', (e) => {
+      syncTemplateDrawer('studio');
+      const selectedTplId = e.target.value;
+      const editPresets = MODE_META.edit?.presets || [];
+      const matched = editPresets.find((p) => p.templateId === selectedTplId && selectedTplId !== 'seedream-edit');
+      if (matched) {
+        if (state.mode !== 'edit') {
+          state.mode = 'edit';
+          renderModeUI();
+          if ($('studioTemplateSelect')) {
+            $('studioTemplateSelect').value = selectedTplId;
+            syncTemplateDrawer('studio');
+          }
+        }
+        const curText = $('promptInput').value.trim();
+        const isKnownPreset = !curText || Object.values(MODE_META).some((m) => (m.presets || []).some((p) => p.text === curText));
+        if (isKnownPreset) {
+          $('promptInput').value = matched.text;
+          updateCharCount();
+          updateQuotePreview();
+        }
+      }
+    });
     $('studioTemplateEditor')?.addEventListener('input', (e) => {
       const tplId = e.target.dataset.tplId;
       if (!tplId) return;
