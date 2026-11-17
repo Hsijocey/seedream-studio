@@ -289,29 +289,37 @@
   }
 
   async function idbPut(key, blob) {
-    const db = await openIdb();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(IDB_STORE, 'readwrite');
-      tx.objectStore(IDB_STORE).put(blob, key);
-      tx.oncomplete = () => {
-        if (blobUrlCache.has(key)) {
-          URL.revokeObjectURL(blobUrlCache.get(key));
-          blobUrlCache.delete(key);
-        }
-        resolve();
-      };
-      tx.onerror = () => reject(tx.error);
-    });
+    try {
+      const db = await openIdb();
+      return await new Promise((resolve, reject) => {
+        const tx = db.transaction(IDB_STORE, 'readwrite');
+        tx.objectStore(IDB_STORE).put(blob, key);
+        tx.oncomplete = () => {
+          if (blobUrlCache.has(key)) {
+            URL.revokeObjectURL(blobUrlCache.get(key));
+            blobUrlCache.delete(key);
+          }
+          resolve();
+        };
+        tx.onerror = () => reject(tx.error);
+      });
+    } catch {
+      // Gracefully skip caching in restricted Private Browsing environments
+    }
   }
 
   async function idbGet(key) {
-    const db = await openIdb();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(IDB_STORE, 'readonly');
-      const req = tx.objectStore(IDB_STORE).get(key);
-      req.onsuccess = () => resolve(req.result || null);
-      req.onerror = () => reject(req.error);
-    });
+    try {
+      const db = await openIdb();
+      return await new Promise((resolve, reject) => {
+        const tx = db.transaction(IDB_STORE, 'readonly');
+        const req = tx.objectStore(IDB_STORE).get(key);
+        req.onsuccess = () => resolve(req.result || null);
+        req.onerror = () => reject(req.error);
+      });
+    } catch {
+      return null;
+    }
   }
 
   async function idbDelete(key) {
@@ -319,13 +327,17 @@
       URL.revokeObjectURL(blobUrlCache.get(key));
       blobUrlCache.delete(key);
     }
-    const db = await openIdb();
-    return new Promise((resolve) => {
-      const tx = db.transaction(IDB_STORE, 'readwrite');
-      tx.objectStore(IDB_STORE).delete(key);
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => resolve();
-    });
+    try {
+      const db = await openIdb();
+      return await new Promise((resolve) => {
+        const tx = db.transaction(IDB_STORE, 'readwrite');
+        tx.objectStore(IDB_STORE).delete(key);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => resolve();
+      });
+    } catch {
+      return undefined;
+    }
   }
 
   async function getBlobObjectUrl(key) {
@@ -353,8 +365,23 @@
     });
   }
 
-  async function processImageBlob(blob, mimeHint, { maxDim = 1280, forceJpeg = false } = {}) {
-    const rawMime = String(mimeHint || blob.type || 'image/png').split(';')[0].trim().toLowerCase();
+  function blobToDataUrl(blob) {
+    return new Promise((res, rej) => {
+      const fr = new FileReader();
+      fr.onload = () => res(String(fr.result));
+      fr.onerror = () => rej(fr.error);
+      fr.readAsDataURL(blob);
+    });
+  }
+
+  async function processImageBlob(
+    blob,
+    mimeHint,
+    { maxDim = 1280, forceJpeg = false, skipDataUrl = false, maxBytes = 9 * 1024 * 1024 } = {}
+  ) {
+    let rawMime = String(mimeHint || blob.type || 'image/png').split(';')[0].trim().toLowerCase();
+    if (rawMime === 'image/jpg') rawMime = 'image/jpeg';
+    const supportedUploadMimes = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'];
     const needsConvert = forceJpeg || !['image/png', 'image/jpeg', 'image/webp'].includes(rawMime);
 
     try {
@@ -363,14 +390,12 @@
       const h = img.naturalHeight || img.height || 1;
       const scale = Math.max(w, h) > maxDim ? maxDim / Math.max(w, h) : 1;
 
-      if (!needsConvert && scale >= 0.999 && blob.size <= 9 * 1024 * 1024) {
-        const dataUrl = await new Promise((res, rej) => {
-          const fr = new FileReader();
-          fr.onload = () => res(String(fr.result));
-          fr.onerror = () => rej(fr.error);
-          fr.readAsDataURL(blob);
-        });
-        return { blob, mime: rawMime, dataUrl };
+      if (!needsConvert && scale >= 0.999 && blob.size <= maxBytes) {
+        return {
+          blob,
+          mime: rawMime,
+          dataUrl: skipDataUrl ? '' : await blobToDataUrl(blob),
+        };
       }
 
       const canvas = document.createElement('canvas');
@@ -379,20 +404,30 @@
       const ctx = canvas.getContext('2d');
       ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
 
-      const outMime = rawMime === 'image/png' && !forceJpeg ? 'image/png' : 'image/jpeg';
-      const outBlob = await new Promise((res) =>
+      let outMime = rawMime === 'image/png' && !forceJpeg ? 'image/png' : 'image/jpeg';
+      let outBlob = await new Promise((res) =>
         canvas.toBlob((b) => res(b || blob), outMime, 0.88)
       );
-      const dataUrl = canvas.toDataURL(outMime, 0.88);
-      return { blob: outBlob, mime: outMime, dataUrl };
+      if (outBlob.size > maxBytes) {
+        outMime = 'image/jpeg';
+        outBlob = await new Promise((res) =>
+          canvas.toBlob((b) => res(b || blob), outMime, 0.84)
+        );
+      }
+      return {
+        blob: outBlob,
+        mime: outMime,
+        dataUrl: skipDataUrl ? '' : await blobToDataUrl(outBlob),
+      };
     } catch {
-      const dataUrl = await new Promise((res, rej) => {
-        const fr = new FileReader();
-        fr.onload = () => res(String(fr.result));
-        fr.onerror = () => rej(fr.error);
-        fr.readAsDataURL(blob);
-      });
-      return { blob, mime: rawMime || 'image/png', dataUrl };
+      if (!supportedUploadMimes.includes(rawMime) || blob.size > maxBytes) {
+        throw makeApiError('无法解析或压缩该参考图片（建议换一张 PNG / JPEG 图片重试）。', 400);
+      }
+      return {
+        blob,
+        mime: rawMime,
+        dataUrl: skipDataUrl ? '' : await blobToDataUrl(blob),
+      };
     }
   }
 
@@ -501,7 +536,27 @@
     }
   }
 
-  async function spicyRequest(path, { method = 'GET', apiKey, body = null, params = null } = {}) {
+  async function fetchWithNetHandling(url, fetchOpts, { label = '网络请求', retries = 0 } = {}) {
+    let lastErr;
+    for (let attempt = 0; attempt <= retries; attempt += 1) {
+      try {
+        return await fetch(url, fetchOpts);
+      } catch (err) {
+        lastErr = err;
+        if (attempt < retries) {
+          await new Promise((r) => setTimeout(r, 500));
+          continue;
+        }
+      }
+    }
+    const detail = lastErr?.message || '网络连接中断';
+    throw makeApiError(`${label}失败（${detail}）。请确认手机网络正常后重试。`, 502);
+  }
+
+  async function spicyRequest(
+    path,
+    { method = 'GET', apiKey, body = null, params = null, retries = null } = {}
+  ) {
     if (!apiKey) throw makeApiError('尚未配置 SpicyAPI Key，请点击右上角「⚙️ 设置」填入。', 401);
     const base = (loadConfig().base_url || DEFAULT_CFG.base_url).replace(/\/+$/, '');
     let url = `${base}${path}`;
@@ -511,11 +566,16 @@
     }
     const headers = { Authorization: `Bearer ${apiKey}` };
     if (body !== null) headers['Content-Type'] = 'application/json';
-    const resp = await fetch(url, {
-      method,
-      headers,
-      body: body !== null ? JSON.stringify(body) : undefined,
-    });
+    const effRetries = retries !== null ? retries : method.toUpperCase() === 'GET' ? 1 : 0;
+    const resp = await fetchWithNetHandling(
+      url,
+      {
+        method,
+        headers,
+        body: body !== null ? JSON.stringify(body) : undefined,
+      },
+      { label: `连接 SpicyAPI (${path})`, retries: effRetries }
+    );
     const json = await resp.json().catch(() => {
       throw makeApiError(`SpicyAPI 返回非 JSON 响应 (${resp.status})`, resp.status);
     });
@@ -533,9 +593,17 @@
     if (!apiKey) throw makeApiError('尚未填写 Venice API Key。', 401);
     const base = (llmBaseUrl || DEFAULT_CFG.llm_base_url).replace(/\/+$/, '');
     const headers = { Authorization: `Bearer ${apiKey}` };
-    let resp = await fetch(`${base}/api_keys/rate_limits`, { headers });
+    let resp = await fetchWithNetHandling(
+      `${base}/api_keys/rate_limits`,
+      { headers },
+      { label: '查询 Venice 余额', retries: 1 }
+    );
     if (resp.status === 404) {
-      resp = await fetch(`${base}/billing/balance`, { headers });
+      resp = await fetchWithNetHandling(
+        `${base}/billing/balance`,
+        { headers },
+        { label: '查询 Venice 余额', retries: 1 }
+      );
     }
     const body = await resp.json().catch(() => {
       throw makeApiError(`Venice 返回非 JSON 响应 (${resp.status})`, resp.status);
@@ -557,17 +625,27 @@
   }
 
   async function uploadBlobToSpicy(apiKey, rawBlob, mimeHint) {
-    const processed = await processImageBlob(rawBlob, mimeHint, { maxDim: 2560, forceJpeg: false });
+    const processed = await processImageBlob(rawBlob, mimeHint, {
+      maxDim: 2560,
+      forceJpeg: false,
+      skipDataUrl: true,
+    });
     const ticket = await spicyRequest('/common/upload-url', {
       method: 'POST',
       apiKey,
       body: { contentType: processed.mime, bytes: processed.blob.size },
+      retries: 1,
     });
-    const putResp = await fetch(ticket.uploadUrl, {
-      method: 'PUT',
-      headers: { 'Content-Type': processed.mime },
-      body: processed.blob,
-    });
+    const putBytes = await processed.blob.arrayBuffer();
+    const putResp = await fetchWithNetHandling(
+      ticket.uploadUrl,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': processed.mime },
+        body: putBytes,
+      },
+      { label: '上传参考图到云存储', retries: 1 }
+    );
     if (!putResp.ok) {
       throw makeApiError(`参考图上传对象存储失败 (HTTP ${putResp.status})`, putResp.status);
     }
@@ -577,6 +655,7 @@
           method: 'POST',
           apiKey,
           body: { fileId: ticket.fileId },
+          retries: 1,
         });
         const uri = res?.file?.uri || res?.uri;
         if (uri) return String(uri);
@@ -646,10 +725,14 @@
         if (ast.filename === filename && (ast.remote_url || ast.url)) {
           const targetUrl = ast.remote_url || ast.url;
           if (!String(targetUrl).startsWith('blob:')) {
-            const resp = await fetch(targetUrl);
-            if (resp.ok) {
-              const b = await resp.blob();
-              return { blob: b, mime: b.type || 'image/png' };
+            try {
+              const resp = await fetchWithNetHandling(targetUrl, {}, { label: '读取历史图片', retries: 1 });
+              if (resp.ok) {
+                const b = await resp.blob();
+                return { blob: b, mime: b.type || 'image/png' };
+              }
+            } catch {
+              throw makeApiError('无法读取该历史图片（可能链接已过期，请重新从相册选图上传）。', 400);
             }
           }
         }
@@ -732,11 +815,15 @@
       if (vp?.reasoning_effort) payload.reasoning_effort = vp.reasoning_effort;
     }
 
-    const resp = await fetch(`${baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(payload),
-    });
+    const resp = await fetchWithNetHandling(
+      `${baseUrl}/chat/completions`,
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload),
+      },
+      { label: '连接文字模型', retries: 0 }
+    );
 
     if (!resp.ok) {
       const errBody = await resp.json().catch(() => ({}));
