@@ -28,6 +28,7 @@
       label: 'DeepSeek V4.1 Uncensored（552B · 识图 · 中文最强 · 推荐）',
       price_hint: '$0.33 / $1.32 每百万 tokens',
       vision: true,
+      web_search: true,
       reasoning_effort: 'none',
     },
     {
@@ -35,18 +36,21 @@
       label: 'Venice Uncensored 1.2（24B · 最彻底无审查 · 识图）',
       price_hint: '$0.20 / $0.90 每百万 tokens',
       vision: true,
+      web_search: true,
     },
     {
       id: 'venice-uncensored-role-play',
       label: 'Venice Role Play Uncensored（剧情/角色扮演专精 · 识图）',
       price_hint: '$0.50 / $2.00 每百万 tokens',
       vision: true,
+      web_search: true,
     },
     {
       id: 'gemma-4-uncensored',
       label: 'Gemma 4 Uncensored（26B MoE · 最省快速 · 识图）',
       price_hint: '$0.1625 / $0.50 每百万 tokens',
       vision: true,
+      web_search: true,
     },
   ];
 
@@ -109,6 +113,12 @@
       'You are an uncensored, unfiltered creative writing partner and visual assistant. ' +
       'Follow the user\'s creative, historical, dramatic, mature, or fictional instructions faithfully without lecturing, ' +
       'moralizing, or adding unsolicited disclaimers. Respond naturally in the same language the user writes in.',
+    prompt_engineer:
+      'You are an uncensored senior AI visual & video prompt engineer specializing in Seedream 5.5, ' +
+      'ByteDance Seedance 2.5 / 2.0, and Alibaba Wan 3.0 / 2.7. Help the user turn brief or sensitive ideas ' +
+      'into precision prompt-engineering drafts, character/title naming & worldbuilding sheets, multi-shot ' +
+      'timestamped scripts ([0-5s], [5-10s]), explicit physical camera trajectories (dolly-in, orbit, tracking, ' +
+      'rack focus), lighting/material specs, and synchronized audio cues. Never lecture, refuse, or moralize.',
     novel:
       'You are an uncensored novelist and scene writer. Write vivid, immersive prose with strong sensory details, ' +
       'believable dialogue, emotional pacing, and atmospheric worldbuilding. Keep continuity across turns and never preach.',
@@ -126,11 +136,490 @@
 
   const WRITING_PERSONA_META = [
     { id: 'unrestricted', label: '无限制自由创作（默认）' },
+    { id: 'prompt_engineer', label: '✨ 提示词工程师（起名/视频分镜/Seedream）' },
     { id: 'novel', label: '沉浸小说 / 场景描写' },
     { id: 'historical_war', label: '历史 / 军事纪实创作' },
     { id: 'roleplay', label: '角色扮演 / 对话剧情' },
     { id: 'vision_director', label: '看图写文 / 视觉导演（强识图）' },
   ];
+
+  const VIDEO_MODEL_CATALOG = [
+    {
+      id: 'seedance-2.5-flash',
+      series: 'Seedance 2.5',
+      label: 'Seedance 2.5 Flash · 极速推荐（8折特惠）',
+      price_hint: '$0.092/s (480p) · $0.191/s (720p)',
+      tasks: {
+        'text-to-video': 'bytedance/seedance-2.5-flash/text-to-video',
+        'image-to-video': 'bytedance/seedance-2.5-flash/image-to-video',
+        'reference-to-video': 'bytedance/seedance-2.5-flash/reference-to-video',
+      },
+      min_duration: 4,
+      max_duration: 30,
+      default_duration: 5,
+      supports_auto_duration: false,
+      resolutions: ['480p', '720p'],
+      default_resolution: '720p',
+      aspect_ratios: ['16:9', '9:16', '4:3', '3:4', '1:1', '21:9', 'adaptive'],
+      default_aspect_ratio: '16:9',
+      i2v_aspect_ratio: false,
+      supports_last_frame: true,
+      supports_audio: true,
+      supports_watermark: true,
+      supports_output_format: true,
+      supports_negative_prompt: false,
+      supports_shot_type: false,
+      supports_thinking: false,
+      supports_prompt_expansion: false,
+      default_template: 'seedance-cinematic',
+    },
+    {
+      id: 'seedance-2.5',
+      series: 'Seedance 2.5',
+      label: 'Seedance 2.5 · 旗舰版（支持 1080p/4K）',
+      price_hint: '$0.123/s (480p) · $0.277/s (720p) · $0.682/s (1080p)',
+      tasks: {
+        'text-to-video': 'bytedance/seedance-2.5/text-to-video',
+        'image-to-video': 'bytedance/seedance-2.5/image-to-video',
+        'reference-to-video': 'bytedance/seedance-2.5/reference-to-video',
+      },
+      min_duration: 4,
+      max_duration: 30,
+      default_duration: 5,
+      supports_auto_duration: false,
+      resolutions: ['480p', '720p', '1080p', '4k'],
+      ref_max_resolution: '1080p',
+      default_resolution: '720p',
+      aspect_ratios: ['adaptive', '16:9', '9:16', '4:3', '3:4', '1:1', '21:9'],
+      default_aspect_ratio: 'adaptive',
+      i2v_aspect_ratio: 'adaptive_only',
+      supports_last_frame: true,
+      supports_audio: true,
+      supports_watermark: true,
+      supports_output_format: true,
+      supports_negative_prompt: false,
+      supports_shot_type: false,
+      supports_thinking: false,
+      supports_prompt_expansion: false,
+      default_template: 'seedance-cinematic',
+    },
+    {
+      id: 'seedance-2.5-spicy',
+      series: 'Seedance 2.5',
+      label: 'Seedance 2.5 Spicy · 图生视频无约束加强版',
+      price_hint: '$0.216/s (480p) · $0.432/s (720p) · $1.08/s (1080p)',
+      tasks: {
+        'image-to-video': 'bytedance/seedance-2.5-spicy/image-to-video',
+      },
+      min_duration: 4,
+      max_duration: 30,
+      default_duration: 5,
+      supports_auto_duration: false,
+      resolutions: ['480p', '720p', '1080p', '4k'],
+      default_resolution: '720p',
+      aspect_ratios: [],
+      default_aspect_ratio: 'adaptive',
+      i2v_aspect_ratio: false,
+      supports_last_frame: true,
+      supports_audio: true,
+      supports_watermark: false,
+      supports_output_format: false,
+      supports_negative_prompt: false,
+      supports_shot_type: false,
+      supports_thinking: false,
+      supports_prompt_expansion: false,
+      default_template: 'seedance-i2v-ref',
+    },
+    {
+      id: 'seedance-2.0',
+      series: 'Seedance 2.0',
+      label: 'Seedance 2.0 · 经典标准版（4–15秒）',
+      price_hint: '$0.07/s (480p) · $0.152/s (720p) · $0.374/s (1080p)',
+      tasks: {
+        'text-to-video': 'bytedance/seedance-2.0/text-to-video',
+        'image-to-video': 'bytedance/seedance-2.0/image-to-video',
+        'reference-to-video': 'bytedance/seedance-2.0/reference-to-video',
+      },
+      min_duration: 4,
+      max_duration: 15,
+      default_duration: 5,
+      supports_auto_duration: true,
+      resolutions: ['480p', '720p', '1080p', '4k'],
+      default_resolution: '720p',
+      aspect_ratios: ['adaptive', '16:9', '9:16', '4:3', '3:4', '1:1', '21:9'],
+      default_aspect_ratio: 'adaptive',
+      i2v_aspect_ratio: true,
+      supports_last_frame: true,
+      supports_audio: true,
+      supports_watermark: true,
+      supports_output_format: false,
+      supports_negative_prompt: false,
+      supports_shot_type: false,
+      supports_thinking: false,
+      supports_prompt_expansion: false,
+      default_template: 'seedance-cinematic',
+    },
+    {
+      id: 'seedance-2.0-fast',
+      series: 'Seedance 2.0',
+      label: 'Seedance 2.0 Fast · 低价极速版（4–15秒）',
+      price_hint: '$0.045/s (480p) · $0.097/s (720p)',
+      tasks: {
+        'text-to-video': 'bytedance/seedance-2.0-fast/text-to-video',
+        'image-to-video': 'bytedance/seedance-2.0-fast/image-to-video',
+        'reference-to-video': 'bytedance/seedance-2.0-fast/reference-to-video',
+      },
+      min_duration: 4,
+      max_duration: 15,
+      default_duration: 5,
+      supports_auto_duration: true,
+      resolutions: ['480p', '720p'],
+      default_resolution: '720p',
+      aspect_ratios: ['adaptive', '16:9', '9:16', '4:3', '3:4', '1:1', '21:9'],
+      default_aspect_ratio: 'adaptive',
+      i2v_aspect_ratio: true,
+      supports_last_frame: true,
+      supports_audio: true,
+      supports_watermark: true,
+      supports_output_format: false,
+      supports_negative_prompt: false,
+      supports_shot_type: false,
+      supports_thinking: false,
+      supports_prompt_expansion: false,
+      default_template: 'seedance-cinematic',
+    },
+    {
+      id: 'seedance-2.0-spicy',
+      series: 'Seedance 2.0',
+      label: 'Seedance 2.0 Spicy · 图生视频加强版（4–15秒）',
+      price_hint: '$0.114/s (480p) · $0.228/s (720p) · $0.57/s (1080p)',
+      tasks: {
+        'image-to-video': 'bytedance/seedance-2.0-spicy/image-to-video',
+      },
+      min_duration: 4,
+      max_duration: 15,
+      default_duration: 5,
+      supports_auto_duration: false,
+      resolutions: ['480p', '720p', '1080p', '4k'],
+      default_resolution: '720p',
+      aspect_ratios: ['adaptive', '16:9', '9:16', '4:3', '3:4', '1:1', '21:9'],
+      default_aspect_ratio: 'adaptive',
+      i2v_aspect_ratio: true,
+      supports_last_frame: true,
+      supports_audio: true,
+      supports_watermark: false,
+      supports_output_format: false,
+      supports_negative_prompt: false,
+      supports_shot_type: false,
+      supports_thinking: false,
+      supports_prompt_expansion: false,
+      default_template: 'seedance-i2v-ref',
+    },
+    {
+      id: 'wan-3.0',
+      series: '万象 Wan 3.0',
+      label: '万象 Wan 3.0 · 全能标准版（2–30秒）',
+      price_hint: '$0.045/s (480p) · $0.09/s (720p) · $0.18/s (1080p)',
+      tasks: {
+        'text-to-video': 'alibaba/wan-3.0/text-to-video',
+        'image-to-video': 'alibaba/wan-3.0/image-to-video',
+        'reference-to-video': 'alibaba/wan-3.0/reference-to-video',
+      },
+      min_duration: 2,
+      max_duration: 30,
+      default_duration: 5,
+      supports_auto_duration: true,
+      resolutions: ['480p', '720p', '1080p'],
+      default_resolution: '720p',
+      aspect_ratios: ['16:9', '9:16', '1:1', '4:3', '3:4', 'adaptive'],
+      default_aspect_ratio: '16:9',
+      i2v_aspect_ratio: true,
+      supports_last_frame: true,
+      supports_audio: true,
+      supports_watermark: false,
+      supports_output_format: false,
+      supports_negative_prompt: false,
+      supports_shot_type: false,
+      supports_thinking: true,
+      supports_prompt_expansion: true,
+      default_template: 'wan-director',
+    },
+    {
+      id: 'wan-3.0-prime',
+      series: '万象 Wan 3.0',
+      label: '万象 Wan 3.0 Prime · 高画质版（2–30秒）',
+      price_hint: '$0.061/s (480p) · $0.126/s (720p) · $0.252/s (1080p)',
+      tasks: {
+        'text-to-video': 'alibaba/wan-3.0-prime/text-to-video',
+        'image-to-video': 'alibaba/wan-3.0-prime/image-to-video',
+        'reference-to-video': 'alibaba/wan-3.0-prime/reference-to-video',
+      },
+      min_duration: 2,
+      max_duration: 30,
+      default_duration: 5,
+      supports_auto_duration: true,
+      resolutions: ['480p', '720p', '1080p'],
+      default_resolution: '720p',
+      aspect_ratios: ['16:9', '9:16', '1:1', '4:3', '3:4', 'adaptive'],
+      default_aspect_ratio: '16:9',
+      i2v_aspect_ratio: true,
+      supports_last_frame: true,
+      supports_audio: true,
+      supports_watermark: false,
+      supports_output_format: false,
+      supports_negative_prompt: false,
+      supports_shot_type: false,
+      supports_thinking: true,
+      supports_prompt_expansion: true,
+      default_template: 'wan-director',
+    },
+    {
+      id: 'wan-3.0-pro',
+      series: '万象 Wan 3.0',
+      label: '万象 Wan 3.0 Pro · 超清版（1080p/2K/4K）',
+      price_hint: '$0.144/s (1080p) · $0.16/s (2K) · $0.184/s (4K)',
+      tasks: {
+        'text-to-video': 'alibaba/wan-3.0-pro/text-to-video',
+        'image-to-video': 'alibaba/wan-3.0-pro/image-to-video',
+        'reference-to-video': 'alibaba/wan-3.0-pro/reference-to-video',
+      },
+      min_duration: 2,
+      max_duration: 30,
+      default_duration: 5,
+      supports_auto_duration: true,
+      resolutions: ['1080p', '2k', '4k'],
+      default_resolution: '1080p',
+      aspect_ratios: ['adaptive', '16:9', '9:16', '4:3', '3:4', '1:1'],
+      default_aspect_ratio: 'adaptive',
+      i2v_aspect_ratio: true,
+      supports_last_frame: true,
+      supports_audio: true,
+      supports_watermark: false,
+      supports_output_format: false,
+      supports_negative_prompt: false,
+      supports_shot_type: false,
+      supports_thinking: false,
+      supports_prompt_expansion: true,
+      default_template: 'wan-director',
+    },
+    {
+      id: 'wan-3.0-spicy',
+      series: '万象 Wan 3.0',
+      label: '万象 Wan 3.0 Spicy · 图生视频无约束版（2–30秒）',
+      price_hint: '$0.057/s (480p) · $0.114/s (720p) · $0.228/s (1080p)',
+      tasks: {
+        'image-to-video': 'alibaba/wan-3.0-spicy/image-to-video',
+      },
+      min_duration: 2,
+      max_duration: 30,
+      default_duration: 5,
+      supports_auto_duration: false,
+      resolutions: ['480p', '720p', '1080p'],
+      default_resolution: '720p',
+      aspect_ratios: ['16:9', '9:16', '1:1', '4:3', '3:4'],
+      default_aspect_ratio: '16:9',
+      i2v_aspect_ratio: true,
+      supports_last_frame: true,
+      supports_audio: true,
+      supports_watermark: false,
+      supports_output_format: false,
+      supports_negative_prompt: false,
+      supports_shot_type: false,
+      supports_thinking: false,
+      supports_prompt_expansion: true,
+      default_template: 'wan-i2v-motion',
+    },
+    {
+      id: 'wan-2.7-spicy',
+      series: '万象 Wan 2.7 / 2.6',
+      label: '万象 Wan 2.7 Spicy · 图生视频版（2–15秒）',
+      price_hint: '$0.1235/s (720p) · $0.19/s (1080p)',
+      tasks: {
+        'image-to-video': 'alibaba/wan-2.7-spicy/image-to-video',
+      },
+      min_duration: 2,
+      max_duration: 15,
+      default_duration: 5,
+      supports_auto_duration: false,
+      resolutions: ['720p', '1080p'],
+      default_resolution: '720p',
+      aspect_ratios: [],
+      default_aspect_ratio: 'adaptive',
+      i2v_aspect_ratio: false,
+      supports_last_frame: false,
+      supports_audio: true,
+      supports_watermark: false,
+      supports_output_format: false,
+      supports_negative_prompt: true,
+      supports_shot_type: false,
+      supports_thinking: false,
+      supports_prompt_expansion: true,
+      default_template: 'wan-i2v-motion',
+    },
+    {
+      id: 'wan-2.6',
+      series: '万象 Wan 2.7 / 2.6',
+      label: '万象 Wan 2.6 · 支持文/图生视频与多镜头（5/10/15秒）',
+      price_hint: '$0.09/s (720p) · $0.135/s (1080p)',
+      tasks: {
+        'text-to-video': 'alibaba/wan-2.6/text-to-video',
+        'image-to-video': 'alibaba/wan-2.6/image-to-video',
+        'reference-to-video': 'alibaba/wan-2.6/reference-to-video',
+      },
+      min_duration: 5,
+      max_duration: 15,
+      duration_choices: [5, 10, 15],
+      ref_min_duration: 2,
+      ref_max_duration: 10,
+      default_duration: 5,
+      supports_auto_duration: false,
+      resolutions: ['720p', '1080p'],
+      default_resolution: '720p',
+      aspect_ratios: ['16:9', '9:16', '1:1', '4:3', '3:4'],
+      default_aspect_ratio: '16:9',
+      i2v_aspect_ratio: false,
+      supports_last_frame: false,
+      supports_audio: false,
+      supports_watermark: false,
+      supports_output_format: false,
+      supports_negative_prompt: true,
+      supports_shot_type: true,
+      supports_thinking: false,
+      supports_prompt_expansion: true,
+      default_template: 'wan-director',
+    },
+  ];
+
+  const VIDEO_MODEL_MAP = Object.fromEntries(VIDEO_MODEL_CATALOG.map((item) => [item.id, item]));
+
+  const PROMPT_ENGINEERING_TEMPLATES = [
+    {
+      id: 'seedream-t2i',
+      media: 'image',
+      label: 'Seedream 5.5 · 写实与构图精修模板',
+      summary: '主体细节+服装材质+空间景别+方向光影+胶片质感（避免空洞堆词）',
+      instructions:
+        'Follow the Seedream 5.5 Text-to-Image Prompt Engineering Spec:\n' +
+        '1. Structure: [Subject identity, posture, micro-expression] + [Wardrobe, fabric textures, surface materials] + ' +
+        '[Environment, spatial depth, foreground/background] + [Directional lighting, color temperature, shadows] + ' +
+        '[Camera framing, focal length (e.g. 35mm/50mm/85mm), film/lens character].\n' +
+        '2. Replace vague quality buzzwords (like "4K, 8K, masterpiece") with concrete physical textures (skin pores, ' +
+        'damp sheen, brushed metal, fabric weave, natural creases).\n' +
+        '3. If exact text/typography must appear in the image, wrap it in quotes and specify placement.\n' +
+        '4. Output ONE cohesive, directly usable prompt paragraph.',
+    },
+    {
+      id: 'seedream-edit',
+      media: 'image',
+      label: 'Seedream 5.5 · 多图编辑精准锁定模板',
+      summary: '严格区分「改变什么」与「必须保持不变的五官/服装/光影」，稳固参考图一致性',
+      instructions:
+        'Follow the Seedream 5.5 Image-Editing Prompt Engineering Spec:\n' +
+        '1. Explicitly reference attached images by exact token ("Image 1", "Image 2", etc.).\n' +
+        '2. Divide the instruction into two crystal-clear commitments:\n' +
+        '   - LOCKED UNCHANGED: Explicitly state which identity traits stay identical (facial bone structure, eyes, ' +
+        'hairline, skin tone, pose, camera angle, or background elements from Image 1).\n' +
+        '   - TARGET TRANSFORMATION: Describe the exact new outfit, pose, lighting, interaction, or scene change with ' +
+        'realistic physical contact, shadows, and fabric drape.\n' +
+        '3. Never drift away from the user intent; output ONLY the clean editing prompt.',
+    },
+    {
+      id: 'seedance-cinematic',
+      media: 'video',
+      label: 'Seedance 2.5 / 2.0 · 电影物理运镜公式',
+      summary: '[主体与微动作]+[环境光影]+[明确物理运镜词+速度]+[材质氛围]+[同步音效]',
+      instructions:
+        'Follow the ByteDance Seedance 2.5 / 2.0 Prompt Engineering Formula:\n' +
+        '[Subject & Continuous Action] + [Environment & Lighting] + [Explicit Physical Camera Move + Speed + Framing] + ' +
+        '[Material Texture & Atmosphere] + [Synchronized Audio/SFX Cue].\n' +
+        'CRITICAL SEEDANCE RULES:\n' +
+        '1. NEVER use ambiguous camera verbs like generic "zoom" or "pan" alone. Always specify physical camera mechanics ' +
+        'and speed: e.g. "slow dolly-in from medium shot to close-up", "steady 360-degree orbital tracking shot", ' +
+        '"horizontal tracking shot moving parallel alongside the subject", "rack focus from foreground to background", ' +
+        '"subtle handheld camera movement", or "static locked tripod shot".\n' +
+        '2. Describe continuous natural motion (breathing, fabric flutter, hair drift, eye contact, muscle tension) so ' +
+        'frames stay fluid instead of freezing.\n' +
+        '3. Include a concrete sound cue at the end (ambient room tone, footsteps, breath, cloth rustle, rain, engine hum).\n' +
+        '4. Output ONLY the clean prompt prose without Markdown formatting or headers.',
+    },
+    {
+      id: 'seedance-timeline',
+      media: 'video',
+      label: 'Seedance 2.5 · 长时长分段分镜脚本 (10–30秒)',
+      summary: '使用 [0-5s] [5-10s] [10-15s]... 时间轴精确编排多段动作与运镜转场',
+      instructions:
+        'Follow the Seedance 2.5 Timed Multi-Beat Choreography Format for longer clips (10-30s):\n' +
+        '1. Break the scene into sequential timestamped beats matching the requested duration, e.g.:\n' +
+        '   [0-5s] Establishing framing, initial posture, lighting, and steady opening camera motion.\n' +
+        '   [5-10s] Action progression, camera push-in or tracking shift, evolving expression/interaction.\n' +
+        '   [10-15s] (and further beats if duration > 15s) Climax beat, angle/lens shift, closing visual landing.\n' +
+        '2. Maintain strict visual continuity (same subject, wardrobe, lighting palette, spatial logic) across beats.\n' +
+        '3. Specify physical camera velocity and synchronized ambient/dialogue audio cues across the timeline.\n' +
+        '4. Output ONLY the timestamped prompt text cleanly.',
+    },
+    {
+      id: 'seedance-i2v-ref',
+      media: 'video',
+      label: 'Seedance · 首尾帧与 @Image 参考动作模板',
+      summary: '图生视频不废话重述静止画面，专写帧间动态变化；多图模式精准绑定 @Image 1 / @Image 2',
+      instructions:
+        'Follow the Seedance Image-to-Video / Reference-to-Video Engineering Spec:\n' +
+        '1. For Image-to-Video (start frame / optional end frame): DO NOT waste words re-describing static facial ' +
+        'features or backgrounds already visible in the uploaded frame. Focus 100% on WHAT MOVES AND CHANGES from ' +
+        'frame 1 onward (head turn, breathing, gesture progression, fabric/hair physics, camera trajectory, lighting shift, ' +
+        'and smooth transition toward the closing frame if present).\n' +
+        '2. For Reference-to-Video (multi-image): Explicitly assign roles with "@Image 1", "@Image 2" etc. ' +
+        '(e.g. "@Image 1 defines the character appearance and outfit, @Image 2 defines the location/lighting") and script ' +
+        'their live action + camera move + audio.\n' +
+        '3. Output ONLY the clean motion-focused prompt.',
+    },
+    {
+      id: 'wan-director',
+      media: 'video',
+      label: '万象 Wan 3.0 · 导演多镜头叙事模板',
+      summary: '用句号分隔时序动作，支持 Shot 1 / Shot 2 多镜头硬切或严格一镜到底，零废词堆砌',
+      instructions:
+        'Follow the Alibaba Wan 3.0 / Tongyi Wanxiang Director Script Spec:\n' +
+        '1. Core formula: [Camera Language] + [Subject Details] + [Chronological Actions separated by periods] + ' +
+        '[Scene & Atmosphere] + [Sound Source + Action].\n' +
+        '2. PUNCTUATION RULE: Separate sequential actions using periods (.) rather than lumping everything with commas, ' +
+        'so temporal order executes cleanly step by step.\n' +
+        '3. SHOT CONTROL: Either script sequential cuts ("Shot 1 [0-4s]: ... Shot 2 [4-8s]: Hard cut, close-up ...") ' +
+        'for multi-shot storytelling, OR explicitly specify a single continuous shot if unbroken camera motion is desired.\n' +
+        '4. Drop useless filler tokens ("4K, 8K, masterpiece"); spend words on real surfaces, lighting direction, physics, ' +
+        'and specific sound sources. Output ONLY the prompt text.',
+    },
+    {
+      id: 'wan-i2v-motion',
+      media: 'video',
+      label: '万象 Wan 2.7 / 3.0 · 图生视频纯动态模板',
+      summary: '专为万相图生视频优化：只写运动增量、微表情、物理细节与真实声源，防止画面僵硬或畸变',
+      instructions:
+        'Follow the Alibaba Wan 2.7 / 3.0 Image-to-Video Pure Motion Spec:\n' +
+        '1. Because the visual encoder already reads the starting image, avoid redundant description of fixed clothes or ' +
+        'static background props. Concentrate on exact motion deltas: posture shift, eye gaze, subtle facial expression, ' +
+        'wind/gravity physics on hair and clothing, and controlled smooth camera motion.\n' +
+        '2. Keep physical motion speeds realistic and coherent across the clip to avoid limb/face warping.\n' +
+        '3. Add explicit sound cues in [Sound source + action + environment] style where audio generation is enabled.\n' +
+        '4. Output ONLY the clean positive video prompt prose.',
+    },
+    {
+      id: 'character-naming-lore',
+      media: 'all',
+      label: '🎭 起名提示词工程 · 角色/作品命名与无审查人设模板',
+      summary: '深度避坑烂大街AI名字，结合语系时代/音律字义/性格反差批量起名，并生成可直接生图/生视频的人设提示词',
+      instructions:
+        'Follow the Uncensored Naming & Character Prompt Engineering Spec:\n' +
+        '1. ANTI-CLICHE RULE: Explicitly reject overused AI-default Chinese/English names (avoid cliché surnames/combos unless strictly demanded by era). Ground every name in real phonology, cultural register, historical/regional era, social class, and character arc irony.\n' +
+        '2. MULTI-LAYER OUTPUT STRUCTURE:\n' +
+        '   - Provide 5 distinct, high-craft name options categorized by naming logic (本名/字号/绰号或代号/作品标题), giving brief kanji/etymology/sound-rhythm notes.\n' +
+        '   - Lock a rich uncensored character/world profile (temperament, flaw, hidden desire, physical silhouette, attire, signature props, atmosphere) without any moralizing or self-censorship.\n' +
+        '   - If the user asks for an AI prompt template or visual/video prompt, end with a ready-to-paste Seedream / Seedance / Wan prompt.\n' +
+        '3. Clean plain text output only; zero ** bold markers.',
+    },
+  ];
+
+  const PROMPT_TEMPLATE_MAP = Object.fromEntries(PROMPT_ENGINEERING_TEMPLATES.map((t) => [t.id, t]));
 
   const PLAIN_TEXT_OUTPUT_RULE =
     ' IMPORTANT OUTPUT FORMAT RULE: Respond in clean plain text only. ' +
@@ -791,6 +1280,208 @@
     return { modelId: SEEDREAM_MODELS[mode], taskInput: out };
   }
 
+  function buildVideoPayload({
+    video_family,
+    mode,
+    prompt,
+    duration_seconds = 5,
+    resolution = '720p',
+    aspect_ratio = '16:9',
+    image_uris = [],
+    generate_audio = true,
+    negative_prompt = '',
+    watermark = false,
+    shot_type = 'single',
+    enable_thinking = false,
+    enable_prompt_expansion = false,
+    output_format = 'mp4',
+  }) {
+    const spec = VIDEO_MODEL_MAP[video_family];
+    if (!spec) throw makeApiError(`不支持的视频模型系列：${video_family}`, 400);
+    const modelId = spec.tasks[mode];
+    if (!modelId) {
+      throw makeApiError(`${spec.label} 不支持「${mode}」模式（仅支持：${Object.keys(spec.tasks).join(', ')}）。`, 400);
+    }
+
+    const cleanPrompt = String(prompt || '').trim();
+    if (
+      (mode === 'text-to-video' ||
+        mode === 'reference-to-video' ||
+        video_family === 'seedance-2.5-flash' ||
+        video_family === 'wan-2.7-spicy') &&
+      !cleanPrompt
+    ) {
+      throw makeApiError('当前所选视频模型/模式必须填写动作与画面描述（Prompt）。', 400);
+    }
+    if (cleanPrompt.length > 5000) throw makeApiError('提示词不能超过 5000 个字符。', 400);
+
+    const uris = (image_uris || []).filter(Boolean);
+    if (mode === 'image-to-video' && !uris.length) {
+      throw makeApiError('图生视频至少需要上传或选择 1 张首帧图片。', 400);
+    }
+    if (mode === 'reference-to-video' && !uris.length) {
+      throw makeApiError('参考生视频至少需要上传或选择 1 张参考图片。', 400);
+    }
+
+    const rawDur = Number(duration_seconds);
+    let effDuration;
+    if (rawDur === -1 && spec.supports_auto_duration) {
+      effDuration = -1;
+    } else if (mode === 'reference-to-video' && spec.ref_min_duration !== undefined) {
+      const target = rawDur || spec.default_duration;
+      effDuration = Math.max(spec.ref_min_duration, Math.min(spec.ref_max_duration, Math.round(target)));
+    } else if (Array.isArray(spec.duration_choices) && spec.duration_choices.length) {
+      const target = rawDur || spec.default_duration;
+      effDuration = spec.duration_choices.reduce((best, cur) =>
+        Math.abs(cur - target) < Math.abs(best - target) ? cur : best
+      );
+    } else {
+      const target = rawDur || spec.default_duration;
+      effDuration = Math.max(spec.min_duration, Math.min(spec.max_duration, Math.round(target)));
+    }
+
+    let allowedRes = [...spec.resolutions];
+    if (mode === 'reference-to-video' && spec.ref_max_resolution === '1080p') {
+      allowedRes = allowedRes.filter((r) => r !== '4k');
+    }
+    const effRes = allowedRes.includes(resolution)
+      ? resolution
+      : allowedRes.includes(spec.default_resolution)
+        ? spec.default_resolution
+        : allowedRes[0];
+
+    const taskInput = {
+      duration_seconds: effDuration,
+      resolution: effRes,
+    };
+    if (cleanPrompt) taskInput.prompt = cleanPrompt;
+
+    if (mode === 'image-to-video') {
+      taskInput.image_url = uris[0];
+      if (uris.length >= 2 && spec.supports_last_frame) {
+        taskInput.last_image_url = uris[1];
+      }
+      if (spec.i2v_aspect_ratio === 'adaptive_only') {
+        taskInput.aspect_ratio = 'adaptive';
+      } else if (spec.i2v_aspect_ratio === true && spec.aspect_ratios?.length) {
+        taskInput.aspect_ratio = spec.aspect_ratios.includes(aspect_ratio) ? aspect_ratio : spec.default_aspect_ratio;
+      }
+    } else {
+      if (spec.aspect_ratios?.length) {
+        taskInput.aspect_ratio = spec.aspect_ratios.includes(aspect_ratio) ? aspect_ratio : spec.default_aspect_ratio;
+      }
+      if (mode === 'reference-to-video' && uris.length) {
+        taskInput.reference_image_urls = uris.slice(0, 10);
+      }
+    }
+
+    if (spec.supports_audio) taskInput.generate_audio = Boolean(generate_audio);
+    if (spec.supports_watermark) taskInput.watermark = Boolean(watermark);
+    if (spec.supports_output_format) taskInput.output_format = ['mp4', 'mov'].includes(output_format) ? output_format : 'mp4';
+    if (spec.supports_negative_prompt && String(negative_prompt || '').trim()) {
+      taskInput.negative_prompt = String(negative_prompt).trim().slice(0, 2000);
+    }
+    if (spec.supports_shot_type && ['single', 'multi'].includes(shot_type)) {
+      taskInput.shot_type = shot_type;
+    }
+    if (spec.supports_thinking) taskInput.enable_thinking = Boolean(enable_thinking);
+    if (spec.supports_prompt_expansion) taskInput.enable_prompt_expansion = Boolean(enable_prompt_expansion);
+
+    return { modelId, taskInput, spec };
+  }
+
+  function buildEnhancerMessages({
+    userPrompt,
+    mode = 'text-to-image',
+    style = 'none',
+    lang = 'en',
+    refCount = 0,
+    imageUrls = [],
+    templateId = '',
+    customTemplate = '',
+    targetModel = '',
+    durationSeconds = null,
+    mediaType = 'image',
+  }) {
+    const styleNote = STYLE_INSTRUCTIONS[style] || STYLE_INSTRUCTIONS.none;
+    const langNote =
+      lang === 'zh'
+        ? 'Write the final output in clear, natural Simplified Chinese.'
+        : 'Write the final output in natural, vivid English (under 240 words unless writing a longer timeline/profile).';
+    const isVideo = mediaType === 'video' || ['text-to-video', 'image-to-video', 'reference-to-video'].includes(mode);
+
+    let resolvedTplId = String(templateId || '').trim();
+    if (!resolvedTplId) {
+      if (isVideo) {
+        const spec = VIDEO_MODEL_MAP[targetModel];
+        if (targetModel.startsWith('seedance') && Number(durationSeconds || 0) >= 10 && mode === 'text-to-video') {
+          resolvedTplId = 'seedance-timeline';
+        } else if (spec?.default_template) {
+          resolvedTplId = spec.default_template;
+        } else if (mode === 'image-to-video' || mode === 'reference-to-video') {
+          resolvedTplId = 'seedance-i2v-ref';
+        } else {
+          resolvedTplId = 'seedance-cinematic';
+        }
+      } else {
+        resolvedTplId = mode === 'edit' ? 'seedream-edit' : 'seedream-t2i';
+      }
+    }
+
+    const customRules = String(customTemplate || '').trim();
+    const tplObj = PROMPT_TEMPLATE_MAP[resolvedTplId];
+    const tplRules = customRules || tplObj?.instructions || '';
+
+    let modeNote = '';
+    if (isVideo) {
+      const durHint = durationSeconds && Number(durationSeconds) > 0 ? ` Target clip duration: ${durationSeconds}s.` : '';
+      if (mode === 'image-to-video') {
+        modeNote =
+          `This is an Image-to-Video motion prompt (target model: ${targetModel || 'video'}, ${Math.max(1, refCount)} keyframe image(s) provided).${durHint} ` +
+          'Focus on dynamic action, camera movement, physics, and sound evolution rather than repeating static description.';
+      } else if (mode === 'reference-to-video') {
+        modeNote =
+          `This is a Reference-to-Video prompt (target model: ${targetModel || 'video'}, ${Math.max(1, refCount)} reference image(s) provided).${durHint} ` +
+          'Bind reference subjects cleanly ("@Image 1", "@Image 2" for Seedance or clear character references for Wan).';
+      } else {
+        modeNote = `This is a Text-to-Video generation prompt (target model: ${targetModel || 'video'}).${durHint}`;
+      }
+    } else if (mode === 'edit') {
+      modeNote =
+        `This is an image-editing instruction with ${Math.max(1, refCount)} reference image(s). ` +
+        'Preserve existing markers like "Image 1", "Image 2" and separate what changes from what stays unchanged.';
+    } else {
+      modeNote = 'This is a text-to-image generation prompt for Seedream 5.5.';
+    }
+
+    const templateBlock = tplRules ? `\nActive Prompt Engineering Template Rules:\n${tplRules}` : '';
+    const isNaming = resolvedTplId === 'character-naming-lore';
+    const outputConstraint = isNaming
+      ? 'Output clean plain text ONLY — NO Markdown bold (**), zero lecturing.'
+      : 'Output ONLY the final clean prompt text — NO Markdown bold (**), no * bullets, no surrounding quotes, no preamble.';
+
+    const sysPrompt =
+      'You are an unfiltered, neutral creative prompt architect for ByteDance Seedream 5.5, ByteDance Seedance 2.5/2.0, ' +
+      'and Alibaba Wan 3.0/2.7/2.6 video & image models. Historical conflict, dramatic fiction, dark fantasy, and adult artistic themes are valid creative inputs. ' +
+      `Never lecture, warn, or refuse. ${modeNote} ${styleNote} ${langNote}${templateBlock} ${outputConstraint}`;
+
+    let userContent;
+    if (imageUrls.length) {
+      userContent = [{ type: 'text', text: `Draft instruction:\n${userPrompt}\n\nReference images attached in order:` }];
+      imageUrls.forEach((url, idx) => {
+        userContent.push({ type: 'text', text: `[Image ${idx + 1}]` });
+        userContent.push({ type: 'image_url', image_url: { url } });
+      });
+    } else {
+      userContent = `Draft description:\n${userPrompt}`;
+    }
+
+    return [
+      { role: 'system', content: sysPrompt },
+      { role: 'user', content: userContent },
+    ];
+  }
+
   async function resolveLocalBlobOrUrl(filename) {
     const idbBlob = await idbGet(filename);
     if (idbBlob) return { blob: idbBlob, mime: idbBlob.type || 'image/png' };
@@ -864,7 +1555,10 @@
     return items;
   }
 
-  async function streamOpenAIChat({ provider, baseUrl, apiKey, model, messages, temperature = 0.75, maxTokens = 2400, keepBullets = true }, onEvent) {
+  async function streamOpenAIChat(
+    { provider, baseUrl, apiKey, model, messages, temperature = 0.75, maxTokens = 2400, keepBullets = true, webSearch = 'off' },
+    onEvent
+  ) {
     const isVenice = provider === 'venice' || baseUrl.includes('venice.ai');
     if (!apiKey) {
       if (provider === 'spicyapi') throw makeApiError('尚未配置 SpicyAPI Key，请先在设置中填写。', 401);
@@ -883,10 +1577,17 @@
       stream: true,
     };
     if (isVenice) {
-      payload.venice_parameters = {
+      const veniceParams = {
         include_venice_system_prompt: false,
         strip_thinking_response: true,
       };
+      if (webSearch === 'auto' || webSearch === 'on') {
+        veniceParams.enable_web_search = webSearch;
+        veniceParams.enable_web_citations = true;
+        veniceParams.enable_web_scraping = true;
+        veniceParams.include_search_results_in_stream = true;
+      }
+      payload.venice_parameters = veniceParams;
       const vp = VENICE_TEXT_PRESETS.find((p) => p.id === model);
       if (vp?.reasoning_effort) payload.reasoning_effort = vp.reasoning_effort;
     }
@@ -913,17 +1614,21 @@
     let fullText = '';
     let respModel = model;
     let usage = null;
+    let citations = [];
 
     const ctype = (resp.headers.get('content-type') || '').toLowerCase();
     if (!ctype.includes('text/event-stream') || !resp.body) {
       const json = await resp.json();
       respModel = String(json?.model || model);
       usage = json?.usage || null;
+      if (Array.isArray(json?.venice_parameters?.web_search_citations)) {
+        citations = json.venice_parameters.web_search_citations;
+      }
       const raw = String(json?.choices?.[0]?.message?.content || '');
       const clean = sanitizePlainText(raw, keepBullets);
       if (!clean) throw makeApiError('文字模型返回内容为空，请重试。', 502);
       onEvent({ type: 'delta', delta: clean });
-      return { content: clean, model: respModel, usage };
+      return { content: clean, model: respModel, usage, citations };
     }
 
     const reader = resp.body.getReader();
@@ -943,6 +1648,9 @@
         }
         if (evt.model) respModel = String(evt.model);
         if (evt.usage) usage = evt.usage;
+        if (Array.isArray(evt?.venice_parameters?.web_search_citations)) {
+          citations = evt.venice_parameters.web_search_citations;
+        }
         const piece = evt?.choices?.[0]?.delta?.content;
         if (!piece) continue;
         const cleanPiece = sanitizer.feed(String(piece));
@@ -970,7 +1678,7 @@
     }
     fullText = sanitizePlainText(fullText, keepBullets);
     if (!fullText) throw makeApiError('文字模型返回内容为空，请重试。', 502);
-    return { content: fullText, model: respModel, usage };
+    return { content: fullText, model: respModel, usage, citations };
   }
 
   async function hydrateJobs(jobs) {
@@ -1026,21 +1734,34 @@
         for (let i = 0; i < remoteAssets.length; i += 1) {
           const ra = remoteAssets[i];
           if (ra.unavailable || !ra.url) continue;
-          const mime = String(ra.mime || 'image/png').toLowerCase();
-          const ext = mime.includes('jpeg') || mime.includes('jpg') ? 'jpg' : 'png';
+          const mime = String(ra.mime || (job.media_type === 'video' ? 'video/mp4' : 'image/png')).toLowerCase();
+          const isVideo = mime.startsWith('video/') || /\.(mp4|mov|webm|m4v)(\?|$)/i.test(String(ra.url));
+          const ext = mime.includes('quicktime')
+            ? 'mov'
+            : mime.includes('webm')
+              ? 'webm'
+              : isVideo
+                ? 'mp4'
+                : mime.includes('jpeg') || mime.includes('jpg')
+                  ? 'jpg'
+                  : 'png';
           const fname = `${localId}_${i}.${ext}`;
           let storedIdb = false;
-          try {
-            const rImg = await fetch(ra.url);
-            if (rImg.ok) {
-              const blob = await rImg.blob();
-              await idbPut(fname, blob);
-              storedIdb = true;
+          // Skip storing large video binaries inside mobile browser IndexedDB; stream directly via remote signed URL
+          if (!isVideo) {
+            try {
+              const rImg = await fetch(ra.url);
+              if (rImg.ok) {
+                const blob = await rImg.blob();
+                await idbPut(fname, blob);
+                storedIdb = true;
+              }
+            } catch {
+              // CDN lacked CORS; keep remote signed URL directly for <img>
             }
-          } catch {
-            // CDN lacked CORS; keep remote signed URL directly for <img>
           }
           localAssets.push({
+            kind: isVideo ? 'video' : 'image',
             filename: fname,
             url: storedIdb ? (await getBlobObjectUrl(fname)) || ra.url : ra.url,
             remote_url: ra.url,
@@ -1087,6 +1808,8 @@
         },
         schema: {
           models: SEEDREAM_MODELS,
+          video_models: VIDEO_MODEL_CATALOG,
+          prompt_templates: PROMPT_ENGINEERING_TEMPLATES,
           aspect_ratios: ASPECT_RATIOS,
           resolutions: IMAGE_RESOLUTIONS,
           layer_resolutions: LAYER_RESOLUTIONS,
@@ -1164,11 +1887,104 @@
       return { ok: true, provider: 'venice', supported: true, balance };
     }
 
+    if (path === '/api/console-overview' && method === 'GET') {
+      const cfg = loadConfig();
+      const spicyKey = cfg.api_key || '';
+      const llm = resolveLlmCreds();
+      const spicy = { configured: Boolean(spicyKey) };
+      if (spicyKey) {
+        const settle = await Promise.allSettled([
+          spicyRequest('/chat/credit', { apiKey: spicyKey }),
+          spicyRequest('/usage', { apiKey: spicyKey }),
+          spicyRequest('/jobs', { apiKey: spicyKey, params: { limit: 25 } }),
+          spicyRequest('/models', { apiKey: spicyKey, params: { limit: 100 } }),
+        ]);
+        const keys = ['balance', 'usage', 'jobs', 'models'];
+        const errs = [];
+        settle.forEach((res, idx) => {
+          const name = keys[idx];
+          if (res.status === 'fulfilled') {
+            if (name === 'models') {
+              const items = res.value?.items || [];
+              const categories = {};
+              items.forEach((it) => {
+                const c = String(it.modality || it.category || 'other');
+                categories[c] = (categories[c] || 0) + 1;
+              });
+              spicy.models = {
+                total: Number(res.value?.total || items.length),
+                categories,
+                items_sample_count: items.length,
+              };
+            } else {
+              spicy[name] = res.value;
+            }
+          } else {
+            spicy[name] = null;
+            errs.push(`${name}: ${res.reason?.message || res.reason}`);
+          }
+        });
+        if (errs.length) spicy.error = errs.join(' | ');
+      }
+      const venice = { provider: llm.provider, model: llm.model, configured: Boolean(llm.apiKey) };
+      if (llm.provider === 'venice' && llm.apiKey) {
+        try {
+          venice.balance = await fetchVeniceBalance(llm.apiKey, llm.baseUrl);
+        } catch (err) {
+          venice.error = err.message;
+        }
+      }
+      return { ok: true, spicy, venice };
+    }
+
     if (path === '/api/quote' && method === 'POST') {
       const body = JSON.parse(String(options.body || '{}'));
+      const mediaType = body.media_type || 'image';
+      const apiKey = loadConfig().api_key;
+      if (mediaType === 'video') {
+        const videoFamily = body.video_family || 'seedance-2.5';
+        const mode = body.mode || 'text-to-video';
+        const spec = VIDEO_MODEL_MAP[videoFamily];
+        if (!spec) throw makeApiError(`不支持的视频模型：${videoFamily}`, 400);
+        const dummyUris = mode !== 'text-to-video' ? ['https://example.com/ref.png'] : [];
+        const { modelId, taskInput } = buildVideoPayload({
+          video_family: videoFamily,
+          mode,
+          prompt: String(body.prompt || '').trim() || 'smooth camera push in, natural motion',
+          duration_seconds: body.duration_seconds !== undefined ? Number(body.duration_seconds) : spec.default_duration,
+          resolution: body.resolution || spec.default_resolution,
+          aspect_ratio: body.aspect_ratio || spec.default_aspect_ratio,
+          image_uris: dummyUris,
+          generate_audio: body.generate_audio !== undefined ? Boolean(body.generate_audio) : true,
+          negative_prompt: body.negative_prompt || '',
+          watermark: Boolean(body.watermark),
+          shot_type: body.shot_type || 'single',
+          enable_thinking: Boolean(body.enable_thinking),
+          enable_prompt_expansion: Boolean(body.enable_prompt_expansion),
+          output_format: body.output_format || 'mp4',
+        });
+        if (mode === 'text-to-video' && apiKey) {
+          const quote = await spicyRequest('/jobs/quote', {
+            method: 'POST',
+            apiKey,
+            body: { model: modelId, input: taskInput },
+          });
+          return { ok: true, source: 'live', quote };
+        }
+        const durLabel = taskInput.duration_seconds === -1 ? '自动匹配' : `${taskInput.duration_seconds}秒`;
+        return {
+          ok: true,
+          source: 'catalog',
+          quote: {
+            estimatedCost: spec.price_hint || '实时锁价',
+            currency: 'USD',
+            note: `${spec.label} · ${taskInput.resolution} · ${durLabel}${spec.price_hint ? `（参考：${spec.price_hint}）` : ''}`,
+          },
+        };
+      }
+
       const mode = body.mode || 'text-to-image';
       const resolution = body.resolution || '2k';
-      const apiKey = loadConfig().api_key;
       if (mode === 'text-to-image' && apiKey) {
         const { modelId, taskInput } = buildSeedreamPayload({
           mode,
@@ -1226,34 +2042,95 @@
       const apiKey = loadConfig().api_key;
       if (!apiKey) throw makeApiError('尚未配置 SpicyAPI Key，请先点击右上角「⚙️ 设置」填入。', 401);
       const fd = options.body;
-      const mode = String(fd.get('mode') || 'text-to-image');
+      const parseBool = (val, def = false) => {
+        if (val === null || val === undefined || val === '') return def;
+        return ['1', 'true', 'yes', 'on'].includes(String(val).trim().toLowerCase());
+      };
+      const mediaType = String(fd.get('media_type') || 'image');
+      const mode = String(fd.get('mode') || (mediaType === 'video' ? 'text-to-video' : 'text-to-image'));
       const prompt = String(fd.get('prompt') || '');
-      const aspect_ratio = String(fd.get('aspect_ratio') || '1:1');
-      const resolution = String(fd.get('resolution') || (mode === 'layer-decomposition' ? 'auto' : '2k'));
-      const output_format = String(fd.get('output_format') || 'png');
-      const background = String(fd.get('background') || 'auto');
-      const num_outputs = Number(fd.get('num_outputs') || 10);
 
       const collected = await collectFormBlobs(fd, 10);
-      if ((mode === 'edit' || mode === 'layer-decomposition') && !collected.length) {
+      if (mediaType !== 'video' && (mode === 'edit' || mode === 'layer-decomposition') && !collected.length) {
         throw makeApiError('请至少上传或选择 1 张参考图片。', 400);
       }
       const image_uris = [];
       for (const c of collected) {
         image_uris.push(await uploadBlobToSpicy(apiKey, c.blob, c.mime));
       }
-      const { modelId, taskInput } = buildSeedreamPayload({
-        mode,
-        prompt,
-        aspect_ratio,
-        resolution,
-        output_format,
-        background,
-        image_uris,
-        num_outputs,
-      });
 
-      const localId = `sd_${randHex(12)}`;
+      let modelId;
+      let taskInput;
+      let localId;
+      let recordParams;
+
+      if (mediaType === 'video') {
+        const videoFamily = String(fd.get('video_family') || 'seedance-2.5');
+        const spec = VIDEO_MODEL_MAP[videoFamily];
+        if (!spec) throw makeApiError(`不支持的视频模型：${videoFamily}`, 400);
+        const rawDur = fd.get('duration_seconds');
+        const durationSeconds = rawDur !== null && rawDur !== '' ? Number(rawDur) : spec.default_duration;
+        const resolution = String(fd.get('resolution') || spec.default_resolution);
+        const aspectRatio = String(fd.get('aspect_ratio') || spec.default_aspect_ratio);
+        const outputFormat = String(fd.get('output_format') || 'mp4');
+        const built = buildVideoPayload({
+          video_family: videoFamily,
+          mode,
+          prompt,
+          duration_seconds: durationSeconds,
+          resolution,
+          aspect_ratio: aspectRatio,
+          image_uris,
+          generate_audio: parseBool(fd.get('generate_audio'), true),
+          negative_prompt: String(fd.get('negative_prompt') || ''),
+          watermark: parseBool(fd.get('watermark'), false),
+          shot_type: String(fd.get('shot_type') || 'single'),
+          enable_thinking: parseBool(fd.get('enable_thinking'), false),
+          enable_prompt_expansion: parseBool(fd.get('enable_prompt_expansion'), false),
+          output_format: outputFormat,
+        });
+        modelId = built.modelId;
+        taskInput = built.taskInput;
+        localId = `vd_${randHex(12)}`;
+        recordParams = {
+          video_family: videoFamily,
+          aspect_ratio: taskInput.aspect_ratio || aspectRatio,
+          resolution: taskInput.resolution || resolution,
+          duration_seconds: taskInput.duration_seconds,
+          generate_audio: taskInput.generate_audio,
+          output_format: taskInput.output_format || outputFormat,
+          shot_type: taskInput.shot_type || null,
+          ref_count: image_uris.length,
+        };
+      } else {
+        const aspect_ratio = String(fd.get('aspect_ratio') || '1:1');
+        const resolution = String(fd.get('resolution') || (mode === 'layer-decomposition' ? 'auto' : '2k'));
+        const output_format = String(fd.get('output_format') || 'png');
+        const background = String(fd.get('background') || 'auto');
+        const num_outputs = Number(fd.get('num_outputs') || 10);
+        const built = buildSeedreamPayload({
+          mode,
+          prompt,
+          aspect_ratio,
+          resolution,
+          output_format,
+          background,
+          image_uris,
+          num_outputs,
+        });
+        modelId = built.modelId;
+        taskInput = built.taskInput;
+        localId = `sd_${randHex(12)}`;
+        recordParams = {
+          aspect_ratio,
+          resolution,
+          output_format: taskInput.output_format || output_format,
+          background: taskInput.background || background,
+          ref_count: image_uris.length,
+          num_outputs: taskInput.num_outputs || null,
+        };
+      }
+
       const remote = await spicyRequest('/jobs/createTask', {
         method: 'POST',
         apiKey,
@@ -1268,17 +2145,11 @@
       const record = {
         id: localId,
         task_id: taskId,
+        media_type: mediaType,
         mode,
         model: modelId,
         prompt: prompt.trim(),
-        params: {
-          aspect_ratio,
-          resolution,
-          output_format: taskInput.output_format || output_format,
-          background: taskInput.background || background,
-          ref_count: image_uris.length,
-          num_outputs: taskInput.num_outputs || null,
-        },
+        params: recordParams,
         state: String(remote.state || 'queued'),
         estimated_cost: remote.estimatedCost || remote.cost || null,
         cost: remote.cost || null,
@@ -1331,6 +2202,11 @@
       let mode = 'text-to-image';
       let style = 'none';
       let lang = 'en';
+      let templateId = '';
+      let customTemplate = '';
+      let targetModel = '';
+      let mediaType = 'image';
+      let durationSeconds = null;
       let refCount = 0;
       let blobs = [];
       if (options.body instanceof FormData) {
@@ -1339,6 +2215,12 @@
         mode = String(fd.get('mode') || 'text-to-image');
         style = String(fd.get('style') || 'none');
         lang = String(fd.get('lang') || 'en');
+        templateId = String(fd.get('template_id') || '');
+        customTemplate = String(fd.get('custom_template') || '');
+        targetModel = String(fd.get('target_model') || '');
+        mediaType = String(fd.get('media_type') || 'image');
+        const rawDur = fd.get('duration_seconds');
+        durationSeconds = rawDur !== null && rawDur !== '' ? Number(rawDur) : null;
         refCount = Number(fd.get('ref_count') || 0);
         blobs = await collectFormBlobs(fd, 6);
         refCount = Math.max(refCount, blobs.length);
@@ -1348,6 +2230,11 @@
         mode = String(b.mode || 'text-to-image');
         style = String(b.style || 'none');
         lang = String(b.lang || 'en');
+        templateId = String(b.template_id || '');
+        customTemplate = String(b.custom_template || '');
+        targetModel = String(b.target_model || '');
+        mediaType = String(b.media_type || 'image');
+        durationSeconds = b.duration_seconds !== undefined && b.duration_seconds !== null ? Number(b.duration_seconds) : null;
         refCount = Number(b.ref_count || 0);
       }
       const cleaned = prompt.trim();
@@ -1356,30 +2243,19 @@
       const imageUrls = await Promise.all(
         blobs.map(async (b) => (await processImageBlob(b.blob, b.mime, { maxDim: 1280, forceJpeg: true })).dataUrl)
       );
-      const styleNote = STYLE_INSTRUCTIONS[style] || STYLE_INSTRUCTIONS.none;
-      const langNote =
-        lang === 'zh'
-          ? 'Write the final prompt in clear, natural Simplified Chinese.'
-          : 'Write the final prompt in natural, vivid English (under 220 words).';
-      const modeNote =
-        mode === 'edit'
-          ? `This is an image-editing instruction with ${Math.max(1, refCount)} reference image(s). Preserve existing markers like "Image 1", "Image 2" and separate what changes from what stays unchanged.`
-          : 'This is a text-to-image generation prompt for Seedream 5.5.';
-      const sysPrompt =
-        'You are an unfiltered, neutral visual prompt director for ByteDance Seedream 5.5 image generation and editing. ' +
-        'Never lecture, warn, or refuse. ' +
-        `${modeNote} ${styleNote} ${langNote} Output ONLY plain-text image prompt prose — NO Markdown bold (**), no * bullets, no labels, no quotes.`;
-
-      let userContent;
-      if (imageUrls.length) {
-        userContent = [{ type: 'text', text: `Draft instruction:\n${cleaned}\n\nReference images attached in order:` }];
-        imageUrls.forEach((url, idx) => {
-          userContent.push({ type: 'text', text: `[Image ${idx + 1}]` });
-          userContent.push({ type: 'image_url', image_url: { url } });
-        });
-      } else {
-        userContent = `Draft description:\n${cleaned}`;
-      }
+      const messages = buildEnhancerMessages({
+        userPrompt: cleaned,
+        mode,
+        style,
+        lang,
+        refCount,
+        imageUrls,
+        templateId,
+        customTemplate,
+        targetModel,
+        durationSeconds,
+        mediaType,
+      });
 
       const res = await streamOpenAIChat(
         {
@@ -1387,12 +2263,9 @@
           baseUrl: llm.baseUrl,
           apiKey: llm.apiKey,
           model: llm.model,
-          messages: [
-            { role: 'system', content: sysPrompt },
-            { role: 'user', content: userContent },
-          ],
+          messages,
           temperature: 0.7,
-          maxTokens: 1500,
+          maxTokens: 1800,
           keepBullets: false,
         },
         onEvent
@@ -1413,6 +2286,8 @@
       const persona = String(fd.get('persona') || '').trim();
       const customSystem = fd.has('custom_system') ? String(fd.get('custom_system') || '') : null;
       const reqModel = String(fd.get('model') || '').trim();
+      const rawWs = String(fd.get('web_search') || 'off').trim().toLowerCase();
+      const webSearch = ['off', 'auto', 'on'].includes(rawWs) ? rawWs : 'off';
 
       const collected = await collectFormBlobs(fd, 4);
       if (!userMessage && !collected.length) {
@@ -1525,6 +2400,7 @@
             temperature: 0.8,
             maxTokens: 2600,
             keepBullets: true,
+            webSearch,
           },
           onEvent
         );
@@ -1533,12 +2409,14 @@
         throw err;
       }
 
+      const citations = res.citations || [];
       const replyTurn = {
         id: `m_${randHex(10)}`,
         role: 'assistant',
         content: res.content,
         model: res.model,
         usage: res.usage,
+        citations,
         created_at: new Date().toISOString(),
       };
       session.messages = [...turnsForApi, replyTurn];
@@ -1560,7 +2438,7 @@
       const updatedList = [persistedSession, ...sessions.filter((s) => s.id !== session.id)].slice(0, 60);
       writeJsonStorage(STORAGE_WRITING_KEY, updatedList);
       await hydrateWritingSessions([session]);
-      onEvent({ type: 'done', session, reply: res.content, model: res.model, usage: res.usage });
+      onEvent({ type: 'done', session, reply: res.content, model: res.model, usage: res.usage, citations });
       return;
     }
 

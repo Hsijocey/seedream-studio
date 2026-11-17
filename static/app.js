@@ -42,6 +42,63 @@
     },
   };
 
+  const CUSTOM_TPL_STORAGE_KEY = 'seedream_custom_templates_v1';
+
+  function readCustomTemplates() {
+    try {
+      const raw = localStorage.getItem(CUSTOM_TPL_STORAGE_KEY);
+      return raw ? JSON.parse(raw) : {};
+    } catch {
+      return {};
+    }
+  }
+
+  function writeCustomTemplates(map) {
+    try {
+      localStorage.setItem(CUSTOM_TPL_STORAGE_KEY, JSON.stringify(map || {}));
+    } catch {
+      // ignore storage quota errors
+    }
+  }
+
+  function isVideoJob(job) {
+    if (!job) return false;
+    if (job.media_type === 'video') return true;
+    const m = String(job.model || '');
+    if (m.includes('seedance') || m.includes('/wan-')) return true;
+    return ['text-to-video', 'image-to-video', 'reference-to-video'].includes(job.mode);
+  }
+
+  const VIDEO_MODE_META = {
+    'text-to-video': {
+      btn: '开始生成视频',
+      promptLabel: '视频分镜 / 动作描述（Prompt）',
+      placeholder: '输入画面与运镜想法（如：大雨中的东京夜景街头，跟拍主角走过霓虹招牌...），或用下方「按模板 AI 扩写」先生成专业分镜脚本...',
+      presets: [
+        { label: 'Seedance 电影运镜', text: 'Slow dolly-in tracking shot along a misty midnight cobblestone street, crimson lanterns reflecting on wet stone, a woman in a dark wool trench coat turns her head toward camera as wind lifts loose strands of hair, soft rainfall and distant muffled footsteps.' },
+        { label: 'Seedance 15s 分镜', text: '[0-5s] Wide establishing static tripod shot of an obsidian library hall illuminated by warm candle sconces, dust motes drifting in golden shafts of light. [5-10s] Smooth orbital tracking shot moving around the reading table as velvet curtains sway and pages turn by themselves. [10-15s] Rack focus into an intimate close-up of inked parchment and sealing wax, subtle crackle of hearth fire.' },
+        { label: '万象3.0 导演两镜', text: 'Shot 1 [0-5s]: Medium tracking shot following a lone motorcyclist leaning through foggy mountain hairpins at dawn. Cold steel guardrails blur past. Engine roar echoes across pines. Shot 2 [5-10s]: Hard cut to low-angle static shot as bike sprays morning mist past camera and disappears into golden horizon.' },
+      ],
+    },
+    'image-to-video': {
+      btn: '开始图生视频',
+      promptLabel: '帧间动态变化与运镜指令（Prompt）',
+      placeholder: '重点描述「从静态画面开始如何动起来」（人物呼吸、抬头/转眸、风吹发丝/衣料、镜头缓慢推进与音效）...',
+      presets: [
+        { label: '细腻人物微动+推镜', text: 'Slow steady dolly-in toward close-up. The subject takes a slow breath, blinks naturally, shifts gaze toward lens with a subtle half-smile while gentle breeze lifts hair strands and fabric creases. Ambient soft room tone.' },
+        { label: '氛围感风动环绕', text: 'Smooth 45-degree orbital camera move around the subject. Soft golden sunlight flickers across cheekbones and dust motes drift through air as coat hem ripples gently. Distant wind chime and footsteps.' },
+      ],
+    },
+    'reference-to-video': {
+      btn: '开始参考生视频',
+      promptLabel: '多图参考脚本（Seedance 可用 @Image 1 / @Image 2 绑定角色与场景）',
+      placeholder: '例如：@Image 1 的人物穿黑风衣穿过 @Image 2 的雨夜老街，镜头平行跟拍并逐步拉近...',
+      presets: [
+        { label: '@Image 1 + @Image 2 融合', text: 'Horizontal tracking shot moving smoothly alongside the character from @Image 1 walking briskly through the atmospheric setting of @Image 2, dramatic rim lighting reflecting off damp pavement, natural stride and coat sway, rain hiss and echoing footsteps.' },
+      ],
+    },
+  };
+
   const state = {
     mode: 'text-to-image',
     aspectRatio: '1:1',
@@ -53,12 +110,32 @@
     refs: [], // { kind: 'upload'|'local', file?, filename?, previewUrl }
     jobs: [],
     activeJobId: null,
+    activeVideoJobId: null,
     pollTimer: null,
     pollStartedAt: {},
     config: null,
     isSubmitting: false,
     isEnhancing: false,
     previousPrompt: null,
+    customTemplates: readCustomTemplates(),
+    // Video Studio state
+    videoMode: 'text-to-video',
+    videoFamily: 'seedance-2.5-flash',
+    videoDuration: 5,
+    videoDurationAuto: false,
+    videoResolution: '720p',
+    videoAspectRatio: '16:9',
+    videoOutputFormat: 'mp4',
+    videoShotType: 'single',
+    videoAudio: true,
+    videoWatermark: false,
+    videoThinking: false,
+    videoExpansion: false,
+    videoRefs: [],
+    isVideoSubmitting: false,
+    isVideoEnhancing: false,
+    previousVideoPrompt: null,
+    // LLM & Writing state
     llmProvider: 'venice',
     workspace: 'studio',
     writingSessions: [],
@@ -221,6 +298,58 @@
     el.classList.remove('hidden');
   }
 
+  function getPromptTemplates() {
+    return state.config?.schema?.prompt_templates || [];
+  }
+
+  function resolveEffectiveTemplateId(scope, explicitId) {
+    if (explicitId) return explicitId;
+    if (scope === 'studio') {
+      return state.mode === 'edit' ? 'seedream-edit' : 'seedream-t2i';
+    }
+    const spec = (state.config?.schema?.video_models || []).find((m) => m.id === state.videoFamily);
+    if (state.videoFamily.startsWith('seedance') && !state.videoDurationAuto && state.videoDuration >= 10 && state.videoMode === 'text-to-video') {
+      return 'seedance-timeline';
+    }
+    if (spec?.default_template) return spec.default_template;
+    return state.videoMode === 'text-to-video' ? 'seedance-cinematic' : 'seedance-i2v-ref';
+  }
+
+  function populateTemplateSelect(selectEl, mediaFilter, emptyLabel) {
+    if (!selectEl) return;
+    const prev = selectEl.value;
+    selectEl.innerHTML = '';
+    const autoOpt = document.createElement('option');
+    autoOpt.value = '';
+    autoOpt.textContent = emptyLabel;
+    selectEl.appendChild(autoOpt);
+    getPromptTemplates()
+      .filter((t) => mediaFilter === 'all' || t.media === 'all' || t.media === mediaFilter)
+      .forEach((tpl) => {
+        const opt = document.createElement('option');
+        opt.value = tpl.id;
+        opt.textContent = `模板：${tpl.label}`;
+        selectEl.appendChild(opt);
+      });
+    if (prev && Array.from(selectEl.options).some((o) => o.value === prev)) {
+      selectEl.value = prev;
+    }
+  }
+
+  function syncTemplateDrawer(scope) {
+    const sel = $(scope === 'studio' ? 'studioTemplateSelect' : 'videoTemplateSelect');
+    const sumEl = $(scope === 'studio' ? 'studioTemplateSummary' : 'videoTemplateSummary');
+    const edEl = $(scope === 'studio' ? 'studioTemplateEditor' : 'videoTemplateEditor');
+    if (!sel || !sumEl || !edEl) return;
+    const tplId = resolveEffectiveTemplateId(scope, sel.value);
+    const tpl = getPromptTemplates().find((t) => t.id === tplId);
+    sumEl.textContent = tpl
+      ? `${tpl.summary}${state.customTemplates[tplId] ? '（当前已使用你的自定义修改）' : ''}`
+      : '使用自动匹配策略';
+    edEl.dataset.tplId = tplId;
+    edEl.value = state.customTemplates[tplId] ?? tpl?.instructions ?? '';
+  }
+
   function renderModeUI() {
     document.querySelectorAll('.segmented-control[aria-label="生成模式"] .seg-btn').forEach((btn) => {
       btn.classList.toggle('active', btn.dataset.mode === state.mode);
@@ -251,6 +380,7 @@
       $('fileInput').setAttribute('multiple', 'multiple');
     }
 
+    syncTemplateDrawer('studio');
     renderPresets();
     renderRefs();
     renderOptions();
@@ -526,7 +656,8 @@
   }
 
   function renderStage() {
-    const job = state.jobs.find((j) => j.id === state.activeJobId) || state.jobs[0] || null;
+    const imageJobs = state.jobs.filter((j) => !isVideoJob(j));
+    const job = imageJobs.find((j) => j.id === state.activeJobId) || imageJobs[0] || null;
     const body = $('stageBody');
     const actions = $('stageActions');
     const badge = $('stageStatusBadge');
@@ -579,6 +710,7 @@
       $('stageSaveBtn').classList.add('hidden');
       $('stageShareBtn').classList.add('hidden');
       $('stageEditBtn').classList.add('hidden');
+      $('stageVideoBtn').classList.add('hidden');
       $('stageLayerBtn').classList.add('hidden');
       $('stageWriteBtn').classList.add('hidden');
       return;
@@ -637,6 +769,7 @@
     actions.classList.remove('hidden');
     $('stageSaveBtn').classList.remove('hidden');
     $('stageEditBtn').classList.remove('hidden');
+    $('stageVideoBtn').classList.remove('hidden');
     $('stageLayerBtn').classList.remove('hidden');
     $('stageWriteBtn').classList.remove('hidden');
 
@@ -646,15 +779,16 @@
 
   function renderHistory() {
     const grid = $('historyGrid');
-    $('historyCount').textContent = String(state.jobs.length);
+    const imageJobs = state.jobs.filter((j) => !isVideoJob(j));
+    $('historyCount').textContent = String(imageJobs.length);
     grid.innerHTML = '';
 
-    if (!state.jobs.length) {
+    if (!imageJobs.length) {
       grid.innerHTML = '<p class="field-hint" style="grid-column:1/-1;text-align:center;padding:24px 0;">暂无生成记录</p>';
       return;
     }
 
-    state.jobs.forEach((job) => {
+    imageJobs.forEach((job) => {
       const card = document.createElement('div');
       card.className = `history-card${job.id === state.activeJobId ? ' active' : ''}`;
       card.addEventListener('click', () => {
@@ -704,7 +838,7 @@
         await apiJson(`/api/tasks/${encodeURIComponent(job.id)}`, { method: 'DELETE' });
         state.jobs = state.jobs.filter((j) => j.id !== job.id);
         if (state.activeJobId === job.id) {
-          state.activeJobId = state.jobs[0]?.id || null;
+          state.activeJobId = state.jobs.find((j) => !isVideoJob(j))?.id || null;
         }
         renderStage();
         renderHistory();
@@ -745,6 +879,8 @@
 
       renderStage();
       renderHistory();
+      renderVideoStage();
+      renderVideoHistory();
       if (finishedAny) {
         refreshBalance();
       }
@@ -926,11 +1062,28 @@
     ];
     populateSelectOptions($('writingPersonaSelect'), personas, (p) => p.label);
 
+    populateTemplateSelect($('writingTemplateSelect'), 'all', '— 选择并载入内置工程模板 —');
+
     const quickPrompts = [
+      {
+        label: '🎭 深度起名+人设',
+        text: '请按“反烂大街命名+完整人设工程”给我设计5个角色/作品名字（附音律、字义、时代感解析），锁定最具张力的一个展开性格缺陷、外貌服饰细节与背景设定，并在最后给一段可直接粘贴生图/生视频的提示词。我的初始想法：',
+      },
+      {
+        label: '🌐 实时新闻创作',
+        text: '请结合你刚联网搜索到的最新真实新闻事件或前沿动态，先列出3条关键事实与时间点，再据此改写一段戏剧张力十足的故事大纲或分镜画面：',
+        enableSearch: 'on',
+      },
+      {
+        label: '🎬 Seedance分镜',
+        text: '请把下面这个灵感改写成符合 Seedance 2.5 规范的 15 秒电影级分镜提示词（按 [0-5s] [5-10s] [10-15s] 划分，写明物理运镜如 dolly-in / orbital tracking shot 与末尾音效，纯文本输出不要 ** 加粗）：',
+      },
+      {
+        label: '🎞️ 万象3.0多镜头',
+        text: '请按阿里万象 Wan 3.0 导演脚本规范，用 Shot 1 / Shot 2 多镜头硬切和句号分隔时序动作的格式，写出可直接生视频的高精度提示词（含光影、材质与具体声源，纯文本输出）：',
+      },
+      { label: '🖼️ 写生图提示词', text: '把我们刚才定稿的这一幕画面，提炼成一段可直接给 Seedream 5.5 使用的英文高精度生图提示词（只输出提示词文本）。' },
       { label: '看图写场景', text: '请仔细观察我发送的参考图中的人物动作、神态、光线和服装细节，据此写一段极具画面感的场景描写：' },
-      { label: '续写下一段', text: '请保持上文的人物性格、语气和细节连贯，继续往下写下一幕剧情：' },
-      { label: '历史纪实风', text: '请用冷静写实的纪实文学笔法，补全装备、时代环境和心理活动：' },
-      { label: '转成生图提示词', text: '把我们刚才定稿的这一幕画面，提炼成一段可直接给 Seedream 5.5 使用的英文高精度生图提示词（只输出提示词文本）。' },
     ];
     const quickRow = $('writingQuickRow');
     quickRow.innerHTML = '';
@@ -940,6 +1093,9 @@
       btn.className = 'preset-chip';
       btn.textContent = qp.label;
       btn.addEventListener('click', () => {
+        if (qp.enableSearch && $('writingWebSearchSelect')) {
+          $('writingWebSearchSelect').value = qp.enableSearch;
+        }
         const input = $('writingInput');
         input.value = input.value.trim() ? `${input.value.trim()}\n${qp.text}` : qp.text;
         input.focus();
@@ -959,11 +1115,12 @@
   }
 
   function setWorkspace(ws) {
-    state.workspace = ws === 'writing' ? 'writing' : 'studio';
+    state.workspace = ['studio', 'video', 'writing'].includes(ws) ? ws : 'studio';
     document.querySelectorAll('[data-workspace]').forEach((btn) => {
       btn.classList.toggle('active', btn.dataset.workspace === state.workspace);
     });
     $('studioView').classList.toggle('hidden', state.workspace !== 'studio');
+    $('videoView').classList.toggle('hidden', state.workspace !== 'video');
     $('writingView').classList.toggle('hidden', state.workspace !== 'writing');
     updateWritingWarnBadge();
     if (state.workspace === 'writing') {
@@ -1026,6 +1183,8 @@
     hintEl.classList.add('hidden');
 
     const prevDraft = $('promptInput').value;
+    const tplId = resolveEffectiveTemplateId('studio', $('studioTemplateSelect').value);
+    const customTpl = $('studioTemplateEditor')?.value?.trim() || '';
     let streamedText = '';
     let gotFirstDelta = false;
     let finalModel = '';
@@ -1039,6 +1198,10 @@
         fd.append('mode', state.mode);
         fd.append('style', $('enhanceStyleSelect').value);
         fd.append('lang', $('enhanceLangSelect').value);
+        fd.append('media_type', 'image');
+        fd.append('target_model', 'seedream-5.5');
+        fd.append('template_id', tplId);
+        if (customTpl) fd.append('custom_template', customTpl);
         fd.append('ref_count', String(state.refs.length));
         appendRefsToFormData(fd, state.refs);
         fetchOpts.body = fd;
@@ -1049,6 +1212,10 @@
           mode: state.mode,
           style: $('enhanceStyleSelect').value,
           lang: $('enhanceLangSelect').value,
+          media_type: 'image',
+          target_model: 'seedream-5.5',
+          template_id: tplId,
+          custom_template: customTpl,
           ref_count: 0,
         });
       }
@@ -1105,6 +1272,843 @@
     $('undoEnhanceBtn').classList.add('hidden');
     $('enhanceHint').classList.add('hidden');
     updateCharCount();
+  }
+
+  /* ==================== Video Studio (Seedance 2.5/2.0 & Wan 3.0/2.7/2.6) ==================== */
+
+  function getActiveVideoSpec() {
+    const models = state.config?.schema?.video_models || [];
+    return models.find((m) => m.id === state.videoFamily) || models[0] || null;
+  }
+
+  function showVideoFormError(msg) {
+    const el = $('videoFormError');
+    if (!msg) {
+      el.classList.add('hidden');
+      el.textContent = '';
+      return;
+    }
+    el.textContent = msg;
+    el.classList.remove('hidden');
+  }
+
+  function renderVideoModelSelect() {
+    const sel = $('videoModelSelect');
+    const models = state.config?.schema?.video_models || [];
+    if (!sel || !models.length) return;
+    const prev = state.videoFamily;
+    sel.innerHTML = '';
+    const groups = new Map();
+    models.forEach((m) => {
+      if (!groups.has(m.series)) groups.set(m.series, []);
+      groups.get(m.series).push(m);
+    });
+    groups.forEach((list, series) => {
+      const grp = document.createElement('optgroup');
+      grp.label = series;
+      list.forEach((m) => {
+        const opt = document.createElement('option');
+        opt.value = m.id;
+        opt.textContent = `${m.label}${m.price_hint ? ` · ${m.price_hint}` : ''}`;
+        grp.appendChild(opt);
+      });
+      sel.appendChild(grp);
+    });
+    if (models.some((m) => m.id === prev)) {
+      sel.value = prev;
+    } else {
+      state.videoFamily = models[0].id;
+      sel.value = state.videoFamily;
+    }
+  }
+
+  function renderVideoModeUI() {
+    const spec = getActiveVideoSpec();
+    if (!spec) return;
+
+    const supportedModes = Object.keys(spec.tasks || {});
+    if (!supportedModes.includes(state.videoMode)) {
+      state.videoMode = supportedModes[0] || 'image-to-video';
+    }
+
+    document.querySelectorAll('[data-video-mode]').forEach((btn) => {
+      const m = btn.dataset.videoMode;
+      const supported = supportedModes.includes(m);
+      btn.disabled = !supported;
+      btn.classList.toggle('active', m === state.videoMode);
+      btn.title = supported ? '' : `${spec.label} 暂不支持该模式`;
+    });
+
+    $('videoModelPriceHint').textContent = spec.price_hint || '';
+    const meta = VIDEO_MODE_META[state.videoMode] || VIDEO_MODE_META['text-to-video'];
+    $('videoPromptLabel').textContent = meta.promptLabel;
+    $('videoPromptInput').placeholder = meta.placeholder;
+    $('videoGenerateBtnLabel').textContent = meta.btn;
+
+    // Reference images section
+    const isRef = state.videoMode !== 'text-to-video';
+    $('videoRefSection').classList.toggle('hidden', !isRef);
+    if (state.videoMode === 'image-to-video') {
+      const maxF = spec.supports_last_frame ? 2 : 1;
+      $('videoRefLabel').textContent = spec.supports_last_frame ? '首帧图 / 尾帧图（最多 2 张）' : '首帧参考图（仅 1 张）';
+      $('videoRefHint').textContent = spec.supports_last_frame ? '第 1 张作起始首帧 · 可选第 2 张作闭合尾帧' : '当前模型仅支持单张首帧（不支持尾帧）';
+      if (maxF === 1) $('videoFileInput').removeAttribute('multiple');
+      else $('videoFileInput').setAttribute('multiple', 'multiple');
+      if (state.videoRefs.length > maxF) {
+        state.videoRefs.slice(maxF).forEach((r) => r.kind === 'upload' && URL.revokeObjectURL(r.previewUrl));
+        state.videoRefs = state.videoRefs.slice(0, maxF);
+      }
+    } else if (state.videoMode === 'reference-to-video') {
+      $('videoRefLabel').textContent = '主体 / 场景参考图（1–10 张）';
+      $('videoRefHint').textContent = '可点击卡片底部按钮插入 @Image 1 / @Image 2';
+      $('videoFileInput').setAttribute('multiple', 'multiple');
+    }
+
+    // Duration controls
+    let dMin = Number(spec.min_duration || 4);
+    let dMax = Number(spec.max_duration || 15);
+    if (state.videoMode === 'reference-to-video' && spec.ref_min_duration !== undefined) {
+      dMin = Number(spec.ref_min_duration);
+      dMax = Number(spec.ref_max_duration);
+    }
+    const range = $('videoDurationRange');
+    range.min = String(dMin);
+    range.max = String(dMax);
+
+    if (!spec.supports_auto_duration) {
+      state.videoDurationAuto = false;
+    }
+    $('videoDurationAutoWrap').classList.toggle('hidden', !spec.supports_auto_duration);
+    $('videoDurationAutoCheck').checked = state.videoDurationAuto;
+
+    let presets = Array.isArray(spec.duration_choices) && spec.duration_choices.length && state.videoMode !== 'reference-to-video'
+      ? [...spec.duration_choices]
+      : [2, 4, 5, 8, 10, 15, 20, 30].filter((d) => d >= dMin && d <= dMax);
+    if (!presets.length) presets = [dMin, dMax];
+
+    if (!state.videoDurationAuto) {
+      if (Array.isArray(spec.duration_choices) && spec.duration_choices.length && state.videoMode !== 'reference-to-video') {
+        state.videoDuration = presets.reduce((best, c) =>
+          Math.abs(c - state.videoDuration) < Math.abs(best - state.videoDuration) ? c : best
+        );
+      } else {
+        state.videoDuration = Math.max(dMin, Math.min(dMax, Number(state.videoDuration) || spec.default_duration));
+      }
+    }
+    range.value = String(state.videoDuration);
+    range.disabled = state.videoDurationAuto;
+    $('videoDurationVal').textContent = state.videoDurationAuto ? '自动 (-1)' : `${state.videoDuration} 秒`;
+    $('videoDurationRangeHint').textContent = `当前模型可选范围：${dMin}–${dMax} 秒${spec.supports_auto_duration ? '（或勾选自动匹配 -1）' : ''}`;
+
+    const durRow = $('videoDurationPresets');
+    durRow.innerHTML = '';
+    presets.forEach((sec) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = `chip-btn${!state.videoDurationAuto && state.videoDuration === sec ? ' active' : ''}`;
+      btn.textContent = `${sec}秒`;
+      btn.addEventListener('click', () => {
+        state.videoDurationAuto = false;
+        state.videoDuration = sec;
+        renderVideoModeUI();
+      });
+      durRow.appendChild(btn);
+    });
+
+    // Resolution chips
+    let resList = [...(spec.resolutions || ['720p'])];
+    if (state.videoMode === 'reference-to-video' && spec.ref_max_resolution === '1080p') {
+      resList = resList.filter((r) => r !== '4k');
+    }
+    if (!resList.includes(state.videoResolution)) {
+      state.videoResolution = resList.includes(spec.default_resolution) ? spec.default_resolution : resList[0];
+    }
+    const resRow = $('videoResolutionRow');
+    resRow.innerHTML = '';
+    resList.forEach((r) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = `chip-btn${state.videoResolution === r ? ' active' : ''}`;
+      btn.textContent = r.toUpperCase();
+      btn.addEventListener('click', () => {
+        state.videoResolution = r;
+        renderVideoModeUI();
+      });
+      resRow.appendChild(btn);
+    });
+
+    // Output format chips
+    $('videoFormatGroup').classList.toggle('hidden', !spec.supports_output_format);
+    const fmtRow = $('videoFormatRow');
+    fmtRow.innerHTML = '';
+    ['mp4', 'mov'].forEach((fmt) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = `chip-btn${state.videoOutputFormat === fmt ? ' active' : ''}`;
+      btn.textContent = fmt.toUpperCase();
+      btn.addEventListener('click', () => {
+        state.videoOutputFormat = fmt;
+        renderVideoModeUI();
+      });
+      fmtRow.appendChild(btn);
+    });
+
+    // Aspect ratio chips
+    let ratios = [...(spec.aspect_ratios || [])];
+    let ratioNote = '';
+    let showRatio = ratios.length > 0;
+    if (state.videoMode === 'image-to-video') {
+      if (spec.i2v_aspect_ratio === 'adaptive_only') {
+        ratios = ['adaptive'];
+        ratioNote = '图生视频默认跟随首帧比例 (adaptive)';
+      } else if (!spec.i2v_aspect_ratio) {
+        showRatio = false;
+      }
+    }
+    $('videoRatioGroup').classList.toggle('hidden', !showRatio);
+    $('videoRatioNote').textContent = ratioNote;
+    if (showRatio && !ratios.includes(state.videoAspectRatio)) {
+      state.videoAspectRatio = ratios.includes(spec.default_aspect_ratio) ? spec.default_aspect_ratio : ratios[0];
+    }
+    const ratioGrid = $('videoRatioGrid');
+    ratioGrid.innerHTML = '';
+    ratios.forEach((r) => {
+      const [w, h] = RATIO_DIMS[r] || [15, 11];
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = `ratio-btn${state.videoAspectRatio === r ? ' active' : ''}`;
+      btn.innerHTML = `<span class="ratio-box" style="width:${w}px;height:${h}px"></span><span>${escapeHtml(r === 'adaptive' ? '自适应' : r)}</span>`;
+      btn.addEventListener('click', () => {
+        state.videoAspectRatio = r;
+        renderVideoModeUI();
+      });
+      ratioGrid.appendChild(btn);
+    });
+
+    // Shot type (Wan 2.6)
+    $('videoShotTypeGroup').classList.toggle('hidden', !spec.supports_shot_type);
+    const shotRow = $('videoShotTypeRow');
+    shotRow.innerHTML = '';
+    [
+      { id: 'single', label: '单镜头连续 (single)' },
+      { id: 'multi', label: '多镜头切换 (multi)' },
+    ].forEach((opt) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = `chip-btn${state.videoShotType === opt.id ? ' active' : ''}`;
+      btn.textContent = opt.label;
+      btn.addEventListener('click', () => {
+        state.videoShotType = opt.id;
+        renderVideoModeUI();
+      });
+      shotRow.appendChild(btn);
+    });
+
+    // Feature checkboxes & negative prompt
+    $('videoAudioGroup').classList.toggle('hidden', !spec.supports_audio);
+    $('videoWatermarkGroup').classList.toggle('hidden', !spec.supports_watermark);
+    $('videoThinkingGroup').classList.toggle('hidden', !spec.supports_thinking);
+    $('videoExpansionGroup').classList.toggle('hidden', !spec.supports_prompt_expansion);
+    $('videoNegPromptGroup').classList.toggle('hidden', !spec.supports_negative_prompt);
+
+    // Quick video presets
+    const presetRow = $('videoPresetRow');
+    presetRow.innerHTML = '';
+    (meta.presets || []).forEach((p) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'preset-chip';
+      btn.textContent = `+ ${p.label}`;
+      btn.addEventListener('click', () => {
+        $('videoPromptInput').value = p.text;
+        $('videoCharCount').textContent = `${p.text.length} / 5000`;
+        updateVideoQuotePreview();
+      });
+      presetRow.appendChild(btn);
+    });
+
+    syncTemplateDrawer('video');
+    renderVideoRefs();
+    updateVideoQuotePreview();
+  }
+
+  function insertVideoTextAtCursor(token) {
+    const ta = $('videoPromptInput');
+    const start = ta.selectionStart ?? ta.value.length;
+    const end = ta.selectionEnd ?? ta.value.length;
+    const before = ta.value.slice(0, start);
+    const after = ta.value.slice(end);
+    const padLeft = before && !before.endsWith(' ') ? ' ' : '';
+    const padRight = after && !after.startsWith(' ') ? ' ' : '';
+    ta.value = `${before}${padLeft}${token}${padRight}${after}`;
+    const cursor = (before + padLeft + token + padRight).length;
+    ta.focus();
+    ta.setSelectionRange(cursor, cursor);
+    $('videoCharCount').textContent = `${ta.value.length} / 5000`;
+  }
+
+  function renderVideoRefs() {
+    const grid = $('videoRefGrid');
+    grid.innerHTML = '';
+    state.videoRefs.forEach((ref, idx) => {
+      const card = document.createElement('div');
+      card.className = 'ref-card';
+
+      const img = document.createElement('img');
+      img.src = ref.previewUrl;
+      img.alt = `Video Ref ${idx + 1}`;
+
+      const badge = document.createElement('span');
+      badge.className = 'ref-badge';
+      if (state.videoMode === 'image-to-video') {
+        badge.textContent = idx === 0 ? '首帧 Frame 1' : '尾帧 Frame 2';
+      } else {
+        badge.textContent = `@Image ${idx + 1}`;
+      }
+
+      const removeBtn = document.createElement('button');
+      removeBtn.type = 'button';
+      removeBtn.className = 'ref-remove';
+      removeBtn.textContent = '✕';
+      removeBtn.title = '移除';
+      removeBtn.addEventListener('click', () => {
+        if (ref.kind === 'upload') URL.revokeObjectURL(ref.previewUrl);
+        state.videoRefs.splice(idx, 1);
+        renderVideoRefs();
+        updateVideoQuotePreview();
+      });
+
+      card.append(img, badge, removeBtn);
+      if (state.videoMode === 'reference-to-video') {
+        const insertBtn = document.createElement('button');
+        insertBtn.type = 'button';
+        insertBtn.className = 'ref-insert';
+        insertBtn.textContent = `+ 插入 @Image ${idx + 1}`;
+        insertBtn.addEventListener('click', () => insertVideoTextAtCursor(`@Image ${idx + 1}`));
+        card.appendChild(insertBtn);
+      }
+      grid.appendChild(card);
+    });
+  }
+
+  function addVideoUploadFiles(fileList) {
+    const spec = getActiveVideoSpec();
+    const limit = state.videoMode === 'image-to-video' ? (spec?.supports_last_frame ? 2 : 1) : 10;
+    const files = Array.from(fileList || []).filter(isImageFile);
+    if (!files.length) return;
+    if (limit === 1) {
+      state.videoRefs.forEach((r) => r.kind === 'upload' && URL.revokeObjectURL(r.previewUrl));
+      state.videoRefs = [];
+    }
+    for (const file of files) {
+      if (state.videoRefs.length >= limit) break;
+      state.videoRefs.push({
+        kind: 'upload',
+        file,
+        previewUrl: URL.createObjectURL(file),
+      });
+    }
+    renderVideoRefs();
+    updateVideoQuotePreview();
+  }
+
+  function addVideoLocalAssetRef(filename, targetMode = 'image-to-video') {
+    state.videoMode = targetMode;
+    const previewUrl =
+      state.cloudMode
+        ? state.jobs.flatMap((j) => j.assets || []).find((a) => a.filename === filename)?.url || `/outputs/${encodeURIComponent(filename)}`
+        : `/outputs/${encodeURIComponent(filename)}`;
+    const item = { kind: 'local', filename, previewUrl };
+    if (targetMode === 'image-to-video') {
+      const spec = getActiveVideoSpec();
+      const limit = spec?.supports_last_frame ? 2 : 1;
+      if (state.videoRefs.length >= limit) {
+        const dropped = state.videoRefs.shift();
+        if (dropped?.kind === 'upload') URL.revokeObjectURL(dropped.previewUrl);
+      }
+      state.videoRefs.unshift(item);
+    } else {
+      if (state.videoRefs.length >= 10) state.videoRefs.shift();
+      state.videoRefs.push(item);
+    }
+    renderVideoModeUI();
+    setWorkspace('video');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  function updateVideoQuotePreview(liveQuote = null) {
+    const el = $('videoQuoteText');
+    const spec = getActiveVideoSpec();
+    if (!el || !spec) return;
+    if (liveQuote && liveQuote.estimatedCost !== undefined) {
+      const note = liveQuote.note ? ` · ${liveQuote.note}` : '（SpicyAPI 实时锁价报价）';
+      const costStr = String(liveQuote.estimatedCost).startsWith('$')
+        ? liveQuote.estimatedCost
+        : `$${liveQuote.estimatedCost}`;
+      el.textContent = `预估费用：${costStr} USD${note}`;
+      return;
+    }
+    const durLabel = state.videoDurationAuto ? '自动时长' : `${state.videoDuration}秒`;
+    el.textContent = `${spec.label.split(' · ')[0]} · ${state.videoResolution.toUpperCase()} · ${durLabel}${spec.price_hint ? `（参考 ${spec.price_hint}）` : ''}`;
+  }
+
+  async function requestVideoQuote() {
+    showVideoFormError('');
+    try {
+      const data = await apiJson('/api/quote', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          media_type: 'video',
+          video_family: state.videoFamily,
+          mode: state.videoMode,
+          prompt: $('videoPromptInput').value,
+          duration_seconds: state.videoDurationAuto ? -1 : state.videoDuration,
+          resolution: state.videoResolution,
+          aspect_ratio: state.videoAspectRatio,
+          output_format: state.videoOutputFormat,
+          shot_type: state.videoShotType,
+          generate_audio: state.videoAudio,
+          watermark: state.videoWatermark,
+          enable_thinking: state.videoThinking,
+          enable_prompt_expansion: state.videoExpansion,
+          negative_prompt: $('videoNegPromptInput').value,
+        }),
+      });
+      updateVideoQuotePreview(data.quote);
+    } catch (err) {
+      showVideoFormError(err.message);
+    }
+  }
+
+  async function enhanceVideoPrompt() {
+    showVideoFormError('');
+    if (state.isVideoEnhancing) return;
+    const raw = $('videoPromptInput').value.trim();
+    if (!raw) {
+      showVideoFormError('请先写几句简单动作或想法，再点击「按模板 AI 扩写」。');
+      return;
+    }
+
+    state.isVideoEnhancing = true;
+    $('videoEnhancePromptBtn').disabled = true;
+    $('videoEnhanceSpinner').classList.remove('hidden');
+    $('videoEnhanceBtnLabel').textContent = state.videoRefs.length ? '看图编排分镜...' : '模板扩写中...';
+    $('videoPromptLoadingText').textContent = 'DeepSeek 正在按模板精修视频脚本...';
+    $('videoPromptLoadingMask').classList.remove('hidden');
+    const hintEl = $('videoEnhanceHint');
+    hintEl.classList.add('hidden');
+
+    const prevDraft = $('videoPromptInput').value;
+    const tplId = resolveEffectiveTemplateId('video', $('videoTemplateSelect').value);
+    const customTpl = $('videoTemplateEditor')?.value?.trim() || '';
+    const durSecs = state.videoDurationAuto ? 0 : state.videoDuration;
+    let streamedText = '';
+    let gotFirstDelta = false;
+    let finalModel = '';
+
+    try {
+      const fetchOpts = { method: 'POST' };
+      if (state.videoRefs.length > 0) {
+        const fd = new FormData();
+        fd.append('prompt', raw);
+        fd.append('mode', state.videoMode);
+        fd.append('lang', $('videoEnhanceLangSelect').value);
+        fd.append('media_type', 'video');
+        fd.append('target_model', state.videoFamily);
+        fd.append('duration_seconds', String(durSecs));
+        fd.append('template_id', tplId);
+        if (customTpl) fd.append('custom_template', customTpl);
+        fd.append('ref_count', String(state.videoRefs.length));
+        appendRefsToFormData(fd, state.videoRefs);
+        fetchOpts.body = fd;
+      } else {
+        fetchOpts.headers = { 'Content-Type': 'application/json' };
+        fetchOpts.body = JSON.stringify({
+          prompt: raw,
+          mode: state.videoMode,
+          lang: $('videoEnhanceLangSelect').value,
+          media_type: 'video',
+          target_model: state.videoFamily,
+          duration_seconds: durSecs,
+          template_id: tplId,
+          custom_template: customTpl,
+          ref_count: 0,
+        });
+      }
+
+      await consumeSse('/api/enhance-prompt/stream', fetchOpts, {
+        onEvent(evt) {
+          if (evt.type === 'delta') {
+            if (!gotFirstDelta) {
+              gotFirstDelta = true;
+              state.previousVideoPrompt = prevDraft;
+              $('videoPromptInput').value = '';
+              $('videoPromptLoadingText').textContent = '正在实时输出视频分镜提示词...';
+            }
+            streamedText = stripBoldMarkers(streamedText + evt.delta);
+            $('videoPromptInput').value = streamedText;
+            $('videoCharCount').textContent = `${streamedText.length} / 5000`;
+          } else if (evt.type === 'done') {
+            state.previousVideoPrompt = prevDraft;
+            const cleanOut = stripBoldMarkers(evt.prompt || streamedText);
+            $('videoPromptInput').value = cleanOut;
+            $('videoCharCount').textContent = `${cleanOut.length} / 5000`;
+            finalModel = evt.model || '';
+          }
+        },
+      });
+
+      $('videoUndoEnhanceBtn').classList.remove('hidden');
+      hintEl.textContent = `已由 ${finalModel || 'DeepSeek'} 按模板扩写完成（可点「撤销」恢复原文）`;
+      hintEl.classList.remove('hidden');
+      if (state.config?.settings?.llm_provider === 'venice') {
+        refreshVeniceBalance();
+      }
+    } catch (err) {
+      if (gotFirstDelta) {
+        $('videoPromptInput').value = prevDraft;
+        state.previousVideoPrompt = null;
+        $('videoCharCount').textContent = `${prevDraft.length} / 5000`;
+      }
+      showVideoFormError(err.message);
+    } finally {
+      state.isVideoEnhancing = false;
+      $('videoEnhancePromptBtn').disabled = false;
+      $('videoEnhanceSpinner').classList.add('hidden');
+      $('videoPromptLoadingMask').classList.add('hidden');
+      $('videoEnhanceBtnLabel').textContent = '✨ 按模板 AI 扩写';
+    }
+  }
+
+  function undoVideoEnhance() {
+    if (state.previousVideoPrompt === null) return;
+    $('videoPromptInput').value = state.previousVideoPrompt;
+    state.previousVideoPrompt = null;
+    $('videoUndoEnhanceBtn').classList.add('hidden');
+    $('videoEnhanceHint').classList.add('hidden');
+    $('videoCharCount').textContent = `${$('videoPromptInput').value.length} / 5000`;
+  }
+
+  async function submitVideoGeneration() {
+    showVideoFormError('');
+    if (state.isVideoSubmitting) return;
+    if (!state.config?.settings?.has_api_key) {
+      openModal('settingsModal');
+      showVideoFormError('请先填写你的 SpicyAPI Key。');
+      return;
+    }
+
+    const prompt = $('videoPromptInput').value.trim();
+    if (
+      (state.videoMode === 'text-to-video' ||
+        state.videoMode === 'reference-to-video' ||
+        state.videoFamily === 'seedance-2.5-flash' ||
+        state.videoFamily === 'wan-2.7-spicy') &&
+      !prompt
+    ) {
+      showVideoFormError('当前所选模型/模式需要填写视频动作描述（Prompt）。');
+      return;
+    }
+    if (state.videoMode !== 'text-to-video' && !state.videoRefs.length) {
+      showVideoFormError('请至少上传或选择 1 张首帧/参考图片。');
+      return;
+    }
+
+    state.isVideoSubmitting = true;
+    $('videoGenerateBtn').disabled = true;
+    $('videoGenerateSpinner').classList.remove('hidden');
+    $('videoGenerateBtnLabel').textContent = state.videoRefs.length ? '上传参考图并提交视频任务...' : '提交视频任务中...';
+
+    try {
+      const fd = new FormData();
+      fd.append('media_type', 'video');
+      fd.append('video_family', state.videoFamily);
+      fd.append('mode', state.videoMode);
+      fd.append('prompt', prompt);
+      fd.append('duration_seconds', String(state.videoDurationAuto ? -1 : state.videoDuration));
+      fd.append('resolution', state.videoResolution);
+      fd.append('aspect_ratio', state.videoAspectRatio);
+      fd.append('output_format', state.videoOutputFormat);
+      fd.append('shot_type', state.videoShotType);
+      fd.append('generate_audio', String(state.videoAudio));
+      fd.append('watermark', String(state.videoWatermark));
+      fd.append('enable_thinking', String(state.videoThinking));
+      fd.append('enable_prompt_expansion', String(state.videoExpansion));
+      fd.append('negative_prompt', $('videoNegPromptInput').value.trim());
+      appendRefsToFormData(fd, state.videoRefs);
+
+      const data = await apiJson('/api/generate', {
+        method: 'POST',
+        body: fd,
+      });
+
+      const job = data.job;
+      state.jobs = [job, ...state.jobs.filter((j) => j.id !== job.id)];
+      state.activeVideoJobId = job.id;
+      renderVideoStage();
+      renderVideoHistory();
+      ensurePolling();
+      refreshBalance();
+    } catch (err) {
+      showVideoFormError(err.message);
+    } finally {
+      state.isVideoSubmitting = false;
+      $('videoGenerateBtn').disabled = false;
+      $('videoGenerateSpinner').classList.add('hidden');
+      $('videoGenerateBtnLabel').textContent = VIDEO_MODE_META[state.videoMode]?.btn || '开始生成视频';
+    }
+  }
+
+  function renderVideoStage() {
+    const videoJobs = state.jobs.filter(isVideoJob);
+    const job = videoJobs.find((j) => j.id === state.activeVideoJobId) || videoJobs[0] || null;
+    const body = $('videoStageBody');
+    const actions = $('videoStageActions');
+    const badge = $('videoStageStatusBadge');
+    const subtitle = $('videoStageSubtitle');
+    if (!body) return;
+
+    if (!job) {
+      body.className = 'stage-body empty';
+      body.innerHTML = `
+        <div class="empty-state">
+          <div class="empty-orb">🎬</div>
+          <p>选择 Seedance 或万象模型，输入动作脚本点击「开始生成视频」</p>
+          <span>可用「✨ 按模板 AI 扩写」先由无审查 DeepSeek 生成电影分镜与时间轴脚本</span>
+        </div>`;
+      actions.classList.add('hidden');
+      badge.classList.add('hidden');
+      subtitle.textContent = '支持 Seedance 2.5 / 2.0 与万象 Wan 3.0 / 2.7，完成后自动保存 MP4';
+      return;
+    }
+
+    state.activeVideoJobId = job.id;
+    badge.classList.remove('hidden');
+
+    if (job.state === 'queued' || job.state === 'running') {
+      badge.className = 'status-pill running';
+      badge.textContent = job.state === 'queued' ? '排队中' : '渲染视频中';
+      const durInfo = job.params?.duration_seconds === -1 ? '自动时长' : `${job.params?.duration_seconds || ''}s`;
+      subtitle.textContent = `${job.model} · ${durInfo} · 预估冻结 ${formatCost(job.estimated_cost || '0.5')}`;
+      body.className = 'stage-body';
+      body.innerHTML = `
+        <div class="empty-state">
+          <div class="empty-orb">🎞️</div>
+          <p>${job.state === 'queued' ? '视频任务已进入云端渲染队列...' : '正在逐帧合成高清视频与音频...'}</p>
+          <span>视频通常需要 45 秒 – 4 分钟；即使关闭或刷新页面，后台轮询仍会自动拉取并保存</span>
+        </div>`;
+      actions.classList.add('hidden');
+      return;
+    }
+
+    if (job.state !== 'succeeded') {
+      badge.className = 'status-pill failed';
+      badge.textContent = job.state === 'expired' ? '已超时' : '生成失败';
+      subtitle.textContent = `${job.model || 'video'} · ${formatTime(job.created_at)}`;
+      body.className = 'stage-body';
+      body.innerHTML = `
+        <div class="empty-state">
+          <div class="empty-orb">!</div>
+          <p>${escapeHtml(job.error_message || '视频任务未成功完成')}</p>
+          <span>失败或超时未成交的任务不会扣费，余额会自动退回</span>
+        </div>`;
+      actions.classList.remove('hidden');
+      $('videoStageSaveBtn').classList.add('hidden');
+      $('videoStageWriteBtn').classList.add('hidden');
+      return;
+    }
+
+    badge.className = 'status-pill succeeded';
+    badge.textContent = job.cost ? `实付 ${formatCost(job.cost)}` : '已完成';
+    const p = job.params || {};
+    const durTag = p.duration_seconds === -1 ? '自动时长' : (p.duration_seconds ? `${p.duration_seconds}s` : '');
+    subtitle.textContent = `${job.model} · ${p.resolution || ''} ${durTag} · ${formatTime(job.completed_at || job.created_at)}`;
+
+    const first = (job.assets || [])[0];
+    body.className = 'stage-body';
+    body.innerHTML = '';
+    if (first?.url) {
+      const video = document.createElement('video');
+      video.className = 'hero-video';
+      video.src = first.url;
+      video.controls = true;
+      video.playsInline = true;
+      video.preload = 'metadata';
+      body.appendChild(video);
+    }
+
+    actions.classList.remove('hidden');
+    $('videoStageSaveBtn').classList.remove('hidden');
+    $('videoStageWriteBtn').classList.remove('hidden');
+  }
+
+  function renderVideoHistory() {
+    const grid = $('videoHistoryGrid');
+    const videoJobs = state.jobs.filter(isVideoJob);
+    $('videoHistoryCount').textContent = String(videoJobs.length);
+    if (!grid) return;
+    grid.innerHTML = '';
+
+    if (!videoJobs.length) {
+      grid.innerHTML = '<p class="field-hint" style="grid-column:1/-1;text-align:center;padding:24px 0;">暂无视频生成记录</p>';
+      return;
+    }
+
+    videoJobs.forEach((job) => {
+      const card = document.createElement('div');
+      card.className = `history-card${job.id === state.activeVideoJobId ? ' active' : ''}`;
+      card.addEventListener('click', () => {
+        state.activeVideoJobId = job.id;
+        renderVideoStage();
+        renderVideoHistory();
+      });
+
+      const thumb = document.createElement('div');
+      thumb.className = 'history-thumb';
+      thumb.style.position = 'relative';
+      if (job.assets?.length && job.assets[0].url) {
+        const vid = document.createElement('video');
+        vid.src = job.assets[0].url;
+        vid.muted = true;
+        vid.preload = 'metadata';
+        vid.style.width = '100%';
+        vid.style.height = '100%';
+        vid.style.objectFit = 'cover';
+        const pill = document.createElement('span');
+        pill.className = 'video-thumb-badge';
+        const d = job.params?.duration_seconds;
+        pill.textContent = d && d > 0 ? `🎬 ${d}s` : '🎬 VIDEO';
+        thumb.append(vid, pill);
+      } else {
+        const st = document.createElement('span');
+        st.className = 'field-hint';
+        st.textContent = job.state === 'queued' || job.state === 'running' ? '⏳ 渲染中' : '⚠️ 未出片';
+        thumb.appendChild(st);
+      }
+
+      const info = document.createElement('div');
+      info.className = 'history-info';
+      const promptEl = document.createElement('div');
+      promptEl.className = 'history-prompt';
+      promptEl.textContent = job.prompt || job.model || '(video)';
+
+      const metaEl = document.createElement('div');
+      metaEl.className = 'history-meta';
+      const left = document.createElement('span');
+      const shortModel = (job.params?.video_family || job.model || '').replace(/^(bytedance|alibaba)\//, '');
+      left.textContent = `${shortModel} ${job.cost ? formatCost(job.cost) : ''}`.trim();
+      const right = document.createElement('span');
+      right.textContent = formatTime(job.created_at);
+      metaEl.append(left, right);
+      info.append(promptEl, metaEl);
+
+      const delBtn = document.createElement('button');
+      delBtn.type = 'button';
+      delBtn.className = 'history-del';
+      delBtn.textContent = '✕';
+      delBtn.title = '删除记录与本地视频';
+      delBtn.addEventListener('click', async (ev) => {
+        ev.stopPropagation();
+        await apiJson(`/api/tasks/${encodeURIComponent(job.id)}`, { method: 'DELETE' });
+        state.jobs = state.jobs.filter((j) => j.id !== job.id);
+        if (state.activeVideoJobId === job.id) {
+          state.activeVideoJobId = state.jobs.find(isVideoJob)?.id || null;
+        }
+        renderVideoStage();
+        renderVideoHistory();
+      });
+
+      card.append(thumb, info, delBtn);
+      grid.appendChild(card);
+    });
+  }
+
+  /* ==================== API Console Overview Modal ==================== */
+
+  async function loadApiConsoleOverview() {
+    const body = $('apiConsoleContent');
+    if (!body) return;
+    body.innerHTML = '<p class="field-hint">正在从 SpicyAPI 与 Venice 获取实时用量与账单...</p>';
+    try {
+      const data = await apiJson('/api/console-overview');
+      const sp = data.spicy || {};
+      const bal = sp.balance || {};
+      const funding = bal.funding || {};
+      const usage = sp.usage || {};
+      const totals = usage.totals || {};
+      const remoteJobs = sp.jobs?.items || [];
+      const models = sp.models || {};
+      const cats = models.categories || {};
+      const vn = data.venice || {};
+      const vnUsd = formatVeniceUsd(vn.balance);
+
+      const catSummary = Object.entries(cats)
+        .map(([k, v]) => `${k}: ${v}`)
+        .join(' · ') || '--';
+
+      const jobsRowsHtml = remoteJobs.length
+        ? remoteJobs
+            .slice(0, 15)
+            .map(
+              (j) => `
+              <tr>
+                <td><code>${escapeHtml(j.model || '--')}</code></td>
+                <td>${escapeHtml(j.state || '--')}</td>
+                <td>${escapeHtml(j.cost !== null && j.cost !== undefined ? `$${j.cost}` : (j.estimatedCost ? `~$${j.estimatedCost}` : '--'))}</td>
+                <td>${escapeHtml(formatTime(j.createdAt || j.created_at))}</td>
+              </tr>`
+            )
+            .join('')
+        : '<tr><td colspan="4" style="color:var(--text-faint);">暂无近期云端任务记录</td></tr>';
+
+      body.innerHTML = `
+        <div class="console-grid">
+          <div class="console-card">
+            <div class="console-card-label">SpicyAPI 可用余额</div>
+            <div class="console-card-val">${sp.configured ? `$${escapeHtml(bal.available ?? '--')}` : '未配置 Key'}</div>
+            <div class="console-card-sub">
+              充值可用：$${escapeHtml(funding.prepaidAvailableUsd ?? '--')} · 赠金：$${escapeHtml(funding.promoAvailableUsd ?? '--')}<br/>
+              任务冻结中：$${escapeHtml(bal.held ?? '0')}
+            </div>
+          </div>
+          <div class="console-card">
+            <div class="console-card-label">SpicyAPI 累计消费与调用（/usage）</div>
+            <div class="console-card-val">${totals.spend !== undefined ? `$${Number(totals.spend).toFixed(4)}` : '--'}</div>
+            <div class="console-card-sub">
+              总调用次数：${escapeHtml(totals.calls ?? '--')} · 模型数：${escapeHtml(models.total ?? '--')}<br/>
+              分类：${escapeHtml(catSummary)}
+            </div>
+          </div>
+          <div class="console-card">
+            <div class="console-card-label">Venice 无审查写作/联网识图余额</div>
+            <div class="console-card-val">${vn.configured ? escapeHtml(vnUsd || '已连接') : '未配置'}</div>
+            <div class="console-card-sub">
+              当前提供商：${escapeHtml(vn.provider || '--')}<br/>
+              默认模型：<code>${escapeHtml(vn.model || '--')}</code>
+            </div>
+          </div>
+        </div>
+        ${sp.error || vn.error ? `<p class="error-banner">${escapeHtml([sp.error, vn.error].filter(Boolean).join(' | '))}</p>` : ''}
+        <div class="field-header" style="margin-top:8px;">
+          <label>SpicyAPI 云端最近任务流水（/jobs，展示前 15 条）</label>
+        </div>
+        <div class="console-table-wrap">
+          <table class="console-table">
+            <thead>
+              <tr><th>模型 Model</th><th>状态</th><th>实付 / 预估 (USD)</th><th>时间</th></tr>
+            </thead>
+            <tbody>${jobsRowsHtml}</tbody>
+          </table>
+        </div>`;
+    } catch (err) {
+      body.innerHTML = `<p class="error-banner">${escapeHtml(err.message)}</p>`;
+    }
+  }
+
+  function openApiConsoleModal() {
+    openModal('apiConsoleModal');
+    loadApiConsoleOverview();
   }
 
   function showWritingError(msg) {
@@ -1268,6 +2272,24 @@
     bubble.textContent = stripBoldMarkers(turn.content || '');
     wrap.appendChild(bubble);
 
+    const citations = turn.citations || [];
+    if (citations.length) {
+      const citeRow = document.createElement('div');
+      citeRow.className = 'writing-citations';
+      citations.slice(0, 6).forEach((c) => {
+        if (!c?.url) return;
+        const a = document.createElement('a');
+        a.className = 'citation-chip';
+        a.href = c.url;
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        a.textContent = `🔗 ${c.title || c.url}`;
+        a.title = c.url;
+        citeRow.appendChild(a);
+      });
+      if (citeRow.children.length) wrap.appendChild(citeRow);
+    }
+
     const foot = document.createElement('div');
     foot.className = 'writing-turn-foot';
     if (turn.role === 'assistant') {
@@ -1297,7 +2319,19 @@
         window.scrollTo({ top: 0, behavior: 'smooth' });
       });
 
-      foot.append(modelTag, copyBtn, drawBtn);
+      const videoBtn = document.createElement('button');
+      videoBtn.type = 'button';
+      videoBtn.className = 'link-btn';
+      videoBtn.textContent = '🎬 去生视频';
+      videoBtn.addEventListener('click', () => {
+        $('videoPromptInput').value = stripBoldMarkers(turn.content || '').slice(0, 4800);
+        $('videoCharCount').textContent = `${$('videoPromptInput').value.length} / 5000`;
+        renderVideoModeUI();
+        setWorkspace('video');
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      });
+
+      foot.append(modelTag, copyBtn, drawBtn, videoBtn);
     } else {
       foot.textContent = formatTime(turn.created_at);
     }
@@ -1317,7 +2351,7 @@
         <div class="empty-state">
           <div class="empty-orb">✍️</div>
           <p>发送剧情、人物设定、历史题材，或点「🖼️ 配图」发参考图让 AI 看着写</p>
-          <span>写完后可点回复下方的「🎨 去画图」直接送到 Seedream 5.5 出图</span>
+          <span>写完后可点回复下方的「🎨 去画图」或「🎬 去生视频」一键联动生成</span>
         </div>`;
       return;
     }
@@ -1347,6 +2381,9 @@
     fd.append('model', $('writingModelSelect').value);
     fd.append('persona', $('writingPersonaSelect').value);
     fd.append('custom_system', $('writingCustomSystem').value.trim());
+    if ($('writingWebSearchSelect')) {
+      fd.append('web_search', $('writingWebSearchSelect').value);
+    }
     appendRefsToFormData(fd, state.writingAttachments);
 
     // Clear composer immediately and show optimistic user turn + spinning loading buffer
@@ -1622,6 +2659,160 @@
     $('enhancePromptBtn').addEventListener('click', enhancePrompt);
     $('undoEnhanceBtn').addEventListener('click', undoEnhance);
     $('generateBtn').addEventListener('click', submitGeneration);
+
+    // Studio template drawer bindings
+    $('studioTemplateSelect')?.addEventListener('change', () => syncTemplateDrawer('studio'));
+    $('studioTemplateEditor')?.addEventListener('input', (e) => {
+      const tplId = e.target.dataset.tplId;
+      if (!tplId) return;
+      state.customTemplates[tplId] = e.target.value;
+      writeCustomTemplates(state.customTemplates);
+    });
+    $('studioTemplateResetBtn')?.addEventListener('click', () => {
+      const tplId = $('studioTemplateEditor')?.dataset?.tplId;
+      if (tplId) {
+        delete state.customTemplates[tplId];
+        writeCustomTemplates(state.customTemplates);
+        syncTemplateDrawer('studio');
+      }
+    });
+
+    // Video Studio bindings
+    document.querySelectorAll('[data-video-mode]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        if (btn.disabled) return;
+        state.videoMode = btn.dataset.videoMode;
+        renderVideoModeUI();
+      });
+    });
+    $('videoModelSelect')?.addEventListener('change', (e) => {
+      state.videoFamily = e.target.value;
+      const spec = getActiveVideoSpec();
+      if (spec) state.videoDuration = Number(spec.default_duration || 5);
+      state.videoDurationAuto = false;
+      renderVideoModeUI();
+    });
+    const vDrop = $('videoDropZone');
+    const vFile = $('videoFileInput');
+    vDrop?.addEventListener('click', () => vFile?.click());
+    vFile?.addEventListener('change', (e) => {
+      addVideoUploadFiles(e.target.files);
+      vFile.value = '';
+    });
+    vDrop?.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      vDrop.classList.add('dragover');
+    });
+    vDrop?.addEventListener('dragleave', () => vDrop.classList.remove('dragover'));
+    vDrop?.addEventListener('drop', (e) => {
+      e.preventDefault();
+      vDrop.classList.remove('dragover');
+      addVideoUploadFiles(e.dataTransfer?.files);
+    });
+    $('videoPromptInput')?.addEventListener('input', () => {
+      $('videoCharCount').textContent = `${$('videoPromptInput').value.length} / 5000`;
+    });
+    $('videoTemplateSelect')?.addEventListener('change', () => syncTemplateDrawer('video'));
+    $('videoTemplateEditor')?.addEventListener('input', (e) => {
+      const tplId = e.target.dataset.tplId;
+      if (!tplId) return;
+      state.customTemplates[tplId] = e.target.value;
+      writeCustomTemplates(state.customTemplates);
+    });
+    $('videoTemplateResetBtn')?.addEventListener('click', () => {
+      const tplId = $('videoTemplateEditor')?.dataset?.tplId;
+      if (tplId) {
+        delete state.customTemplates[tplId];
+        writeCustomTemplates(state.customTemplates);
+        syncTemplateDrawer('video');
+      }
+    });
+    $('videoEnhancePromptBtn')?.addEventListener('click', enhanceVideoPrompt);
+    $('videoUndoEnhanceBtn')?.addEventListener('click', undoVideoEnhance);
+    $('videoDurationRange')?.addEventListener('input', (e) => {
+      state.videoDurationAuto = false;
+      state.videoDuration = Number(e.target.value);
+      renderVideoModeUI();
+    });
+    $('videoDurationAutoCheck')?.addEventListener('change', (e) => {
+      state.videoDurationAuto = e.target.checked;
+      renderVideoModeUI();
+    });
+    $('videoAudioCheck')?.addEventListener('change', (e) => { state.videoAudio = e.target.checked; });
+    $('videoWatermarkCheck')?.addEventListener('change', (e) => { state.videoWatermark = e.target.checked; });
+    $('videoThinkingCheck')?.addEventListener('change', (e) => { state.videoThinking = e.target.checked; });
+    $('videoExpansionCheck')?.addEventListener('change', (e) => { state.videoExpansion = e.target.checked; });
+    $('videoRefreshQuoteBtn')?.addEventListener('click', requestVideoQuote);
+    $('videoGenerateBtn')?.addEventListener('click', submitVideoGeneration);
+
+    $('videoStageSaveBtn')?.addEventListener('click', () => {
+      const job = state.jobs.find((j) => j.id === state.activeVideoJobId);
+      const asset = job?.assets?.[0];
+      if (!asset?.url) return;
+      const a = document.createElement('a');
+      a.href = asset.url;
+      a.download = asset.filename || 'video.mp4';
+      a.target = '_blank';
+      a.rel = 'noopener';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    });
+    $('videoStageWriteBtn')?.addEventListener('click', () => {
+      const job = state.jobs.find((j) => j.id === state.activeVideoJobId);
+      if (!job) return;
+      $('writingInput').value = `基于我刚才的视频提示词继续拓展剧情或下一镜分镜：\n${job.prompt || ''}`;
+      setWorkspace('writing');
+      $('writingInput').focus();
+    });
+    $('videoStageReuseBtn')?.addEventListener('click', () => {
+      const job = state.jobs.find((j) => j.id === state.activeVideoJobId);
+      if (!job) return;
+      const p = job.params || {};
+      if (p.video_family) state.videoFamily = p.video_family;
+      if (job.mode) state.videoMode = job.mode;
+      if (p.duration_seconds !== undefined && p.duration_seconds !== null) {
+        if (Number(p.duration_seconds) === -1) {
+          state.videoDurationAuto = true;
+        } else {
+          state.videoDurationAuto = false;
+          state.videoDuration = Number(p.duration_seconds);
+        }
+      }
+      if (p.resolution) state.videoResolution = p.resolution;
+      if (p.aspect_ratio) state.videoAspectRatio = p.aspect_ratio;
+      if (p.output_format) state.videoOutputFormat = p.output_format;
+      $('videoPromptInput').value = job.prompt || '';
+      $('videoCharCount').textContent = `${$('videoPromptInput').value.length} / 5000`;
+      renderVideoModelSelect();
+      renderVideoModeUI();
+    });
+    $('videoRefreshHistoryBtn')?.addEventListener('click', async () => {
+      const hist = await apiJson('/api/tasks');
+      state.jobs = hist.items || [];
+      renderVideoStage();
+      renderVideoHistory();
+      ensurePolling();
+    });
+
+    // API Console & Writing template bindings
+    $('openApiConsoleBtn')?.addEventListener('click', openApiConsoleModal);
+    $('refreshApiConsoleBtn')?.addEventListener('click', loadApiConsoleOverview);
+    $('writingTemplateSelect')?.addEventListener('change', (e) => {
+      const tplId = e.target.value;
+      if (!tplId) return;
+      const tpl = getPromptTemplates().find((t) => t.id === tplId);
+      if (!tpl) return;
+      $('writingCustomSystem').value =
+        state.customTemplates[tplId] ??
+        `You are an unfiltered creative prompt architect.\n${tpl.instructions}\nOutput clean plain text ONLY, zero ** bold markers.`;
+      const sysDetails = document.querySelector('.writing-system-details');
+      if (sysDetails) sysDetails.open = true;
+      if (Array.from($('writingPersonaSelect').options).some((o) => o.value === 'prompt_engineer')) {
+        $('writingPersonaSelect').value = 'prompt_engineer';
+      }
+      $('writingInput').focus();
+    });
     $('balancePill').addEventListener('click', () => {
       if (!state.config?.settings?.has_api_key) {
         openModal('settingsModal');
@@ -1779,6 +2970,12 @@
       if (asset?.filename) addLocalAssetRef(asset.filename, 'edit');
     });
 
+    $('stageVideoBtn')?.addEventListener('click', () => {
+      const job = state.jobs.find((j) => j.id === state.activeJobId);
+      const asset = job?.assets?.[0];
+      if (asset?.filename) addVideoLocalAssetRef(asset.filename, 'image-to-video');
+    });
+
     $('stageLayerBtn').addEventListener('click', () => {
       const job = state.jobs.find((j) => j.id === state.activeJobId);
       const asset = job?.assets?.[0];
@@ -1840,16 +3037,23 @@
       ]);
       state.config = cfgRes;
       state.jobs = histRes.items || [];
-      state.activeJobId = state.jobs[0]?.id || null;
+      state.activeJobId = state.jobs.find((j) => !isVideoJob(j))?.id || null;
+      state.activeVideoJobId = state.jobs.find(isVideoJob)?.id || null;
       state.writingSessions = writeRes.items || [];
       state.activeWritingId = state.writingSessions[0]?.id || null;
 
+      populateTemplateSelect($('studioTemplateSelect'), 'image', '模板：自动匹配');
+      populateTemplateSelect($('videoTemplateSelect'), 'video', '模板：自动匹配');
       renderLlmSettingsOptions();
       renderWritingControls();
+      renderVideoModelSelect();
       updateSettingsDisplay();
       renderModeUI();
+      renderVideoModeUI();
       renderStage();
       renderHistory();
+      renderVideoStage();
+      renderVideoHistory();
       renderWritingSessions();
       renderWritingMessages();
       ensurePolling();

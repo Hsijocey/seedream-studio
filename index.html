@@ -14,7 +14,7 @@
   <link rel="apple-touch-icon" sizes="180x180" href="./static/icons/apple-touch-icon.png" />
   <link rel="icon" type="image/svg+xml" href="./static/icons/icon.svg" />
 
-  <link rel="stylesheet" href="./static/styles.css?v=20261117-v8" />
+  <link rel="stylesheet" href="./static/styles.css?v=20261117-v9" />
 </head>
 <body>
   <div class="app-shell">
@@ -24,12 +24,13 @@
         <img src="./static/icons/icon.svg" alt="Seedream" class="brand-icon" />
         <div class="brand-text">
           <span class="brand-title">Seedream Studio</span>
-          <span class="brand-badge">5.5</span>
+          <span class="brand-badge">Pro</span>
         </div>
       </div>
 
       <div class="segmented-control workspace-nav" role="tablist" aria-label="工作区切换">
         <button type="button" class="seg-btn active" data-workspace="studio">🎨 生图工作台</button>
+        <button type="button" class="seg-btn" data-workspace="video">🎬 视频生成</button>
         <button type="button" class="seg-btn" data-workspace="writing">✍️ 自由写作</button>
       </div>
 
@@ -41,6 +42,10 @@
         <button id="veniceBalancePill" class="pill-btn balance-pill hidden" type="button" title="Venice.ai 写作/识图余额（点击刷新）">
           <span class="dot" id="veniceDot"></span>
           <span id="veniceBalanceText">Venice</span>
+        </button>
+        <button id="openApiConsoleBtn" class="ghost-btn" type="button" title="查看 API 余额、消费统计、云端任务记录与模型数量">
+          <span class="btn-icon">📊</span>
+          <span class="btn-label">API 面板</span>
         </button>
         <button id="openPhoneBtn" class="ghost-btn" type="button">
           <span class="btn-icon">📱</span>
@@ -116,6 +121,7 @@
           <!-- AI Prompt Enhancer Toolbar -->
           <div class="enhance-bar">
             <div class="enhance-controls">
+              <select id="studioTemplateSelect" class="mini-select" title="无审查提示词工程模板"></select>
               <select id="enhanceStyleSelect" class="mini-select" title="扩写风格">
                 <option value="none" selected>风格：默认不预设（自由扩展）</option>
                 <option value="cinematic">风格：电影质感</option>
@@ -136,6 +142,14 @@
               </button>
             </div>
           </div>
+          <details class="template-drawer">
+            <summary>📐 查看 / 自定义当前提示词工程模板规则（无审查 DeepSeek 执行）</summary>
+            <p id="studioTemplateSummary" class="field-hint" style="margin:6px 0;"></p>
+            <textarea id="studioTemplateEditor" rows="4" class="template-editor"></textarea>
+            <div class="template-editor-foot">
+              <button id="studioTemplateResetBtn" type="button" class="link-btn">↺ 恢复官方内置模板</button>
+            </div>
+          </details>
           <p id="enhanceHint" class="field-hint hidden" style="margin: 6px 0 0;"></p>
 
           <!-- Quick Prompt Chips -->
@@ -224,6 +238,7 @@
             <button id="stageSaveBtn" type="button" class="secondary-btn">⬇️ 保存原图</button>
             <button id="stageShareBtn" type="button" class="secondary-btn hidden">📲 存到手机相册</button>
             <button id="stageEditBtn" type="button" class="secondary-btn">✏️ 送去编辑</button>
+            <button id="stageVideoBtn" type="button" class="secondary-btn">🎬 送去生成视频</button>
             <button id="stageLayerBtn" type="button" class="secondary-btn">🧩 拆解图层</button>
             <button id="stageWriteBtn" type="button" class="secondary-btn">✍️ 发去写作</button>
             <button id="stageReuseBtn" type="button" class="ghost-btn small-btn">↺ 复用提示词</button>
@@ -241,6 +256,211 @@
       </section>
     </main>
 
+    <!-- Video Generation Studio (Seedance 2.5 / 2.0 + Wan 3.0 / 2.7 / 2.6) -->
+    <main id="videoView" class="studio-grid hidden">
+      <section class="panel control-panel">
+        <div class="segmented-control" role="tablist" aria-label="视频模式">
+          <button type="button" class="seg-btn active" data-video-mode="text-to-video">文生视频</button>
+          <button type="button" class="seg-btn" data-video-mode="image-to-video">图生视频</button>
+          <button type="button" class="seg-btn" data-video-mode="reference-to-video">参考生视频</button>
+        </div>
+
+        <div class="field-group">
+          <div class="field-header">
+            <label for="videoModelSelect">视频模型系列</label>
+            <span id="videoModelPriceHint" class="field-hint"></span>
+          </div>
+          <select id="videoModelSelect" class="full-select"></select>
+        </div>
+
+        <div id="videoRefSection" class="field-group hidden">
+          <div class="field-header">
+            <label id="videoRefLabel">首帧图片（可选第 2 张作尾帧）</label>
+            <span class="field-hint" id="videoRefHint">图生视频：第 1 张首帧 · 第 2 张尾帧</span>
+          </div>
+
+          <div id="videoDropZone" class="drop-zone">
+            <input id="videoFileInput" type="file" accept="image/*" multiple hidden />
+            <div class="drop-zone-inner">
+              <span class="drop-icon">🎞️</span>
+              <span class="drop-title">点击选择或拖拽首帧 / 参考图片</span>
+              <span class="drop-sub">支持从 Seedream 生图结果一键「🎬 送去生成视频」</span>
+            </div>
+          </div>
+
+          <div id="videoRefGrid" class="ref-grid"></div>
+        </div>
+
+        <div class="field-group">
+          <div class="field-header">
+            <label for="videoPromptInput" id="videoPromptLabel">视频分镜 / 动作描述（Prompt）</label>
+            <span class="char-count" id="videoCharCount">0 / 5000</span>
+          </div>
+          <div class="prompt-input-wrap">
+            <textarea
+              id="videoPromptInput"
+              rows="4"
+              maxlength="5000"
+              placeholder="输入简短画面想法，或写好 [0-5s] 分镜描述后点击「✨ AI 扩写视频提示词」..."
+            ></textarea>
+            <div id="videoPromptLoadingMask" class="prompt-loading-pill hidden">
+              <span class="writing-ring-spinner small"></span>
+              <span id="videoPromptLoadingText">DeepSeek 正在按模板精修提示词...</span>
+            </div>
+          </div>
+
+          <div class="enhance-bar">
+            <div class="enhance-controls">
+              <select id="videoTemplateSelect" class="mini-select" title="无审查视频提示词工程模板"></select>
+              <select id="videoEnhanceLangSelect" class="mini-select" title="输出提示词语言">
+                <option value="en">输出：英文</option>
+                <option value="zh">输出：中文</option>
+              </select>
+            </div>
+            <div class="enhance-actions">
+              <button id="videoUndoEnhanceBtn" type="button" class="ghost-btn small-btn hidden">↶ 撤销</button>
+              <button id="videoEnhancePromptBtn" type="button" class="secondary-btn small-btn enhance-btn">
+                <span class="btn-spinner hidden" id="videoEnhanceSpinner"></span>
+                <span id="videoEnhanceBtnLabel">✨ 按模板 AI 扩写</span>
+              </button>
+            </div>
+          </div>
+
+          <details class="template-drawer">
+            <summary>📐 查看 / 自定义当前视频提示词模板规则（无审查 DeepSeek 执行）</summary>
+            <p id="videoTemplateSummary" class="field-hint" style="margin:6px 0;"></p>
+            <textarea id="videoTemplateEditor" rows="4" class="template-editor"></textarea>
+            <div class="template-editor-foot">
+              <button id="videoTemplateResetBtn" type="button" class="link-btn">↺ 恢复官方内置模板</button>
+            </div>
+          </details>
+          <p id="videoEnhanceHint" class="field-hint hidden" style="margin: 6px 0 0;"></p>
+          <div class="preset-row" id="videoPresetRow"></div>
+        </div>
+
+        <!-- Video Duration Controls -->
+        <div class="field-group">
+          <div class="field-header">
+            <label for="videoDurationRange">视频时长（秒）</label>
+            <div class="inline-meta-right">
+              <label id="videoDurationAutoWrap" class="check-pill hidden">
+                <input id="videoDurationAutoCheck" type="checkbox" />
+                <span>自动匹配 (-1)</span>
+              </label>
+              <span class="badge-value" id="videoDurationVal">5 秒</span>
+            </div>
+          </div>
+          <input id="videoDurationRange" type="range" min="4" max="30" value="5" class="range-slider" />
+          <div class="chip-row" id="videoDurationPresets" style="margin-top:8px;"></div>
+          <span id="videoDurationRangeHint" class="field-hint">Seedance 2.5 / 万象 3.0 最高支持 30 秒</span>
+        </div>
+
+        <div class="two-col-fields">
+          <div class="field-group">
+            <div class="field-header">
+              <label>视频分辨率</label>
+            </div>
+            <div class="chip-row" id="videoResolutionRow"></div>
+          </div>
+
+          <div id="videoFormatGroup" class="field-group">
+            <div class="field-header">
+              <label>输出格式</label>
+            </div>
+            <div class="chip-row" id="videoFormatRow"></div>
+          </div>
+        </div>
+
+        <div id="videoRatioGroup" class="field-group">
+          <div class="field-header">
+            <label>视频画面比例</label>
+            <span class="field-hint" id="videoRatioNote"></span>
+          </div>
+          <div class="ratio-grid" id="videoRatioGrid"></div>
+        </div>
+
+        <div id="videoShotTypeGroup" class="field-group hidden">
+          <div class="field-header">
+            <label>镜头叙事模式（Wan 2.6）</label>
+          </div>
+          <div class="chip-row" id="videoShotTypeRow"></div>
+        </div>
+
+        <div class="toggle-grid">
+          <label id="videoAudioGroup" class="check-pill">
+            <input id="videoAudioCheck" type="checkbox" checked />
+            <span>🔊 同步生成音频/音效</span>
+          </label>
+          <label id="videoWatermarkGroup" class="check-pill">
+            <input id="videoWatermarkCheck" type="checkbox" />
+            <span>🏷️ 水印</span>
+          </label>
+          <label id="videoThinkingGroup" class="check-pill hidden">
+            <input id="videoThinkingCheck" type="checkbox" />
+            <span>🧠 镜头深度思考 (Wan)</span>
+          </label>
+          <label id="videoExpansionGroup" class="check-pill hidden">
+            <input id="videoExpansionCheck" type="checkbox" />
+            <span>✨ 平台提示词扩展 (Wan)</span>
+          </label>
+        </div>
+
+        <div id="videoNegPromptGroup" class="field-group hidden" style="margin-top:10px;">
+          <div class="field-header">
+            <label for="videoNegPromptInput">负向提示词（可选 · Wan 2.7 / 2.6）</label>
+          </div>
+          <input id="videoNegPromptInput" type="text" placeholder="例如：blurry, distorted hands, jitter, watermark..." />
+        </div>
+
+        <div class="submit-footer">
+          <div class="quote-bar">
+            <span id="videoQuoteText">选择模型与时长后可点右侧「实时询价」</span>
+            <button id="videoRefreshQuoteBtn" type="button" class="link-btn">实时询价</button>
+          </div>
+
+          <button id="videoGenerateBtn" type="button" class="primary-btn submit-btn">
+            <span class="btn-spinner hidden" id="videoGenerateSpinner"></span>
+            <span id="videoGenerateBtnLabel">开始生成视频</span>
+          </button>
+          <p id="videoFormError" class="error-banner hidden"></p>
+        </div>
+      </section>
+
+      <section class="panel workspace-panel">
+        <div class="stage-card">
+          <div class="stage-header">
+            <div>
+              <h2 class="stage-title">视频预览台</h2>
+              <p id="videoStageSubtitle" class="stage-subtitle">支持 Seedance 2.5 / 2.0 与万象 Wan 3.0 / 2.7，完成后自动保存 MP4</p>
+            </div>
+            <div id="videoStageStatusBadge" class="status-pill hidden"></div>
+          </div>
+
+          <div id="videoStageBody" class="stage-body empty">
+            <div class="empty-state">
+              <div class="empty-orb">🎬</div>
+              <p>选择 Seedance 或万象模型，输入动作脚本点击「开始生成视频」</p>
+              <span>可用「✨ 按模板 AI 扩写」先由无审查 DeepSeek 生成电影分镜与时间轴脚本</span>
+            </div>
+          </div>
+
+          <div id="videoStageActions" class="stage-actions hidden">
+            <button id="videoStageSaveBtn" type="button" class="secondary-btn">⬇️ 下载视频文件</button>
+            <button id="videoStageWriteBtn" type="button" class="secondary-btn">✍️ 发去写作续写</button>
+            <button id="videoStageReuseBtn" type="button" class="ghost-btn small-btn">↺ 复用提示词与参数</button>
+          </div>
+        </div>
+
+        <div class="gallery-section">
+          <div class="gallery-header">
+            <h3>视频生成记录 <span id="videoHistoryCount" class="count-chip">0</span></h3>
+            <button id="videoRefreshHistoryBtn" type="button" class="link-btn">刷新</button>
+          </div>
+          <div id="videoHistoryGrid" class="history-grid"></div>
+        </div>
+      </section>
+    </main>
+
     <!-- Uncensored Writing + Vision Workspace -->
     <main id="writingView" class="writing-grid hidden">
       <aside class="panel writing-sidebar">
@@ -254,13 +474,27 @@
         </div>
 
         <div class="field-group compact-field">
+          <label for="writingWebSearchSelect">🌐 实时联网搜索（新闻 / 时事）</label>
+          <select id="writingWebSearchSelect" class="full-select">
+            <option value="off">关闭（离线纯净无搜索）</option>
+            <option value="auto">自动（模型按需触发联网）</option>
+            <option value="on">强制联网（实时新闻与网页引用）</option>
+          </select>
+        </div>
+
+        <div class="field-group compact-field">
           <label for="writingPersonaSelect">创作模式 / 角色预设</label>
           <select id="writingPersonaSelect" class="full-select"></select>
         </div>
 
+        <div class="field-group compact-field">
+          <label for="writingTemplateSelect">📐 载入提示词工程模板</label>
+          <select id="writingTemplateSelect" class="full-select"></select>
+        </div>
+
         <details class="writing-system-details">
-          <summary>自定义系统设定（可选）</summary>
-          <textarea id="writingCustomSystem" rows="3" placeholder="例如：请用冷峻写实的第三人称视角叙述，保持人物性格连贯，不要输出额外解释..."></textarea>
+          <summary>自定义系统设定（可选 / 模板内容）</summary>
+          <textarea id="writingCustomSystem" rows="4" placeholder="例如：请用冷峻写实的第三人称视角叙述，保持人物性格连贯，或从上方下拉加载起名/视频分镜模板..."></textarea>
         </details>
 
         <div class="writing-sessions-wrap">
@@ -536,6 +770,25 @@
     </div>
   </div>
 
+  <!-- API Console Overview Modal -->
+  <div id="apiConsoleModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="apiConsoleTitle">
+    <div class="modal-card wide-modal">
+      <div class="modal-head">
+        <h3 id="apiConsoleTitle">📊 API 用量、余额与云端任务面板</h3>
+        <button type="button" class="icon-close" data-close="apiConsoleModal">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="console-head-bar">
+          <span class="field-hint">实时读取 SpicyAPI（/chat/credit · /usage · /jobs · /models）与 Venice 账户余额</span>
+          <button id="refreshApiConsoleBtn" type="button" class="secondary-btn small-btn">↻ 刷新数据</button>
+        </div>
+        <div id="apiConsoleContent" class="api-console-body">
+          <p class="field-hint">点击加载中...</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Lightbox Modal for Mobile/Desktop Zoom & Long-press save -->
   <div id="lightboxModal" class="modal-backdrop hidden" role="dialog" aria-modal="true">
     <div class="lightbox-wrap">
@@ -545,7 +798,7 @@
     </div>
   </div>
 
-  <script src="./static/direct_api.js?v=20261117-v8"></script>
-  <script src="./static/app.js?v=20261117-v8"></script>
+  <script src="./static/direct_api.js?v=20261117-v9"></script>
+  <script src="./static/app.js?v=20261117-v9"></script>
 </body>
 </html>
