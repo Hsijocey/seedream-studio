@@ -530,6 +530,87 @@ select:focus {
   color: var(--accent-bright);
 }
 
+.ref-card.is-base-canvas {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent), 0 4px 14px rgba(245, 158, 11, 0.22);
+}
+
+.ref-dim-btn {
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  bottom: 29px;
+  font-size: 0.65rem;
+  font-weight: 600;
+  background: rgba(11, 11, 14, 0.84);
+  color: var(--text-muted);
+  padding: 2px 5px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ref-dim-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent-bright);
+}
+
+.ref-dim-btn.active {
+  background: rgba(245, 158, 11, 0.22);
+  border-color: var(--accent);
+  color: var(--accent-bright);
+}
+
+/* Edit Base-Image Size Lock Box */
+.size-lock-box {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: rgba(245, 158, 11, 0.06);
+  border: 1px solid var(--accent-border);
+}
+
+.size-lock-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.size-lock-title {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--accent-bright);
+}
+
+.size-lock-exact-toggle {
+  font-size: 0.74rem;
+  padding: 3px 8px;
+  min-height: 26px;
+}
+
+.size-lock-chips .chip-btn {
+  flex: 0 1 auto;
+  min-height: 30px;
+  padding: 0 9px;
+  font-size: 0.76rem;
+}
+
+.size-lock-status {
+  margin: 8px 0 0;
+  font-size: 0.76rem;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+.size-lock-status strong {
+  color: var(--accent-bright);
+}
+
 /* Ratio Grid */
 .ratio-grid {
   display: grid;

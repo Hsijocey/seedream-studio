@@ -132,7 +132,9 @@
     outputFormat: 'png',
     background: 'auto',
     numOutputs: 10,
-    refs: [], // { kind: 'upload'|'local', file?, filename?, previewUrl }
+    sizeLockMode: 'auto', // 'auto' | 'ref:1'..'ref:10' | 'manual'
+    exactPixelMatch: false,
+    refs: [], // { kind: 'upload'|'local', file?, filename?, previewUrl, width?, height? }
     jobs: [],
     activeJobId: null,
     activeVideoJobId: null,
@@ -409,7 +411,217 @@
     renderPresets();
     renderRefs();
     renderOptions();
+    syncEditSizeLock();
     updateQuotePreview();
+  }
+
+  function measureRefDimensions(ref) {
+    if (!ref || !ref.previewUrl) return;
+    if (ref.width > 0 && ref.height > 0) return;
+    const img = new Image();
+    img.onload = () => {
+      const w = img.naturalWidth || img.width || 0;
+      const h = img.naturalHeight || img.height || 0;
+      if (w > 0 && h > 0) {
+        ref.width = w;
+        ref.height = h;
+        syncEditSizeLock();
+      }
+    };
+    img.src = ref.previewUrl;
+  }
+
+  function getEditSizeLockInfo() {
+    if (state.mode !== 'edit') {
+      return { active: false, mode: state.sizeLockMode, baseIndex: null, ref: null, matchedRatio: null, ratioDiffPct: 0, reason: '' };
+    }
+    if (state.sizeLockMode.startsWith('ref:')) {
+      const idx = Number(state.sizeLockMode.slice(4));
+      if (!Number.isInteger(idx) || idx < 1 || idx > state.refs.length) {
+        state.sizeLockMode = 'auto';
+      }
+    }
+    if (!state.refs.length) {
+      return {
+        active: false,
+        mode: state.sizeLockMode,
+        baseIndex: null,
+        ref: null,
+        matchedRatio: null,
+        ratioDiffPct: 0,
+        reason: '上传参考图后会自动分析提示词并锁定底图原尺寸，防止编辑变形',
+      };
+    }
+    if (state.sizeLockMode === 'manual') {
+      return {
+        active: false,
+        mode: 'manual',
+        baseIndex: null,
+        ref: null,
+        matchedRatio: null,
+        ratioDiffPct: 0,
+        reason: `当前为自由比例模式（手动输出 ${state.aspectRatio}），点上方「✨ 自动识别底图」可恢复按底图固定尺寸`,
+      };
+    }
+
+    let baseIndex = 1;
+    let reason = '';
+    if (state.sizeLockMode === 'auto') {
+      const prompt = $('promptInput')?.value || '';
+      const det = window.DirectApi?.detectEditBaseImage
+        ? window.DirectApi.detectEditBaseImage(prompt, state.refs.length)
+        : { index: 1, reason: '默认参考 Image 1 原尺寸' };
+      baseIndex = det?.index || 1;
+      reason = det?.reason || `默认以 Image ${baseIndex} 为底图`;
+    } else if (state.sizeLockMode.startsWith('ref:')) {
+      baseIndex = Number(state.sizeLockMode.slice(4)) || 1;
+      reason = `已手动锁定 Image ${baseIndex} 作为底图尺寸源`;
+    }
+
+    const baseRef = state.refs[baseIndex - 1] || null;
+    const w = baseRef?.width || null;
+    const h = baseRef?.height || null;
+    let matchedRatio = null;
+    let ratioDiffPct = 0;
+    if (w && h && window.DirectApi?.matchClosestAspectRatio) {
+      matchedRatio = window.DirectApi.matchClosestAspectRatio(w, h);
+      const [rw, rh] = matchedRatio.split(':').map(Number);
+      if (rw && rh) {
+        ratioDiffPct = Math.abs(Math.log((w / h) / (rw / rh))) * 100;
+      }
+    }
+    return {
+      active: true,
+      mode: state.sizeLockMode,
+      baseIndex,
+      ref: baseRef,
+      width: w,
+      height: h,
+      matchedRatio,
+      ratioDiffPct,
+      reason,
+    };
+  }
+
+  function updateRefCardBaseIndicators(activeBaseIndex) {
+    const cards = document.querySelectorAll('#refGrid .ref-card');
+    cards.forEach((card, idx) => {
+      const ref = state.refs[idx];
+      const isBase = state.mode === 'edit' && activeBaseIndex === idx + 1;
+      card.classList.toggle('is-base-canvas', isBase);
+      const dimBtn = card.querySelector('.ref-dim-btn');
+      if (dimBtn && ref) {
+        const dimLabel = ref.width && ref.height ? `${ref.width}×${ref.height}` : '读取尺寸...';
+        const ratioTag =
+          ref.width && ref.height && window.DirectApi?.matchClosestAspectRatio
+            ? window.DirectApi.matchClosestAspectRatio(ref.width, ref.height)
+            : '';
+        dimBtn.classList.toggle('active', isBase);
+        dimBtn.textContent = isBase
+          ? `📐 底图 ${dimLabel}`
+          : ratioTag
+            ? `${dimLabel} · 设为底图`
+            : '设为底图';
+        dimBtn.title = isBase
+          ? `当前已锁定 Image ${idx + 1}（${dimLabel}${ratioTag ? ` / ${ratioTag}` : ''}）为底图`
+          : `点击手动锁定 Image ${idx + 1}（${dimLabel}${ratioTag ? ` / ${ratioTag}` : ''}）为底图尺寸`;
+      }
+    });
+  }
+
+  function renderEditSizeLockUI(info) {
+    const panel = $('editSizeLockPanel');
+    if (!panel) return;
+    const isEdit = state.mode === 'edit';
+    panel.classList.toggle('hidden', !isEdit);
+    if (!isEdit) {
+      if ($('ratioNote')) $('ratioNote').textContent = '支持 8 种标准画幅比例';
+      return;
+    }
+
+    const exactCheck = $('exactPixelMatchCheck');
+    if (exactCheck) {
+      exactCheck.checked = Boolean(state.exactPixelMatch);
+      exactCheck.disabled = !info.active;
+    }
+
+    const row = $('sizeLockRow');
+    if (row) {
+      row.innerHTML = '';
+      const autoBtn = document.createElement('button');
+      autoBtn.type = 'button';
+      autoBtn.className = `chip-btn${state.sizeLockMode === 'auto' ? ' active' : ''}`;
+      autoBtn.textContent = '✨ 自动识别底图';
+      autoBtn.addEventListener('click', () => {
+        state.sizeLockMode = 'auto';
+        syncEditSizeLock();
+      });
+      row.appendChild(autoBtn);
+
+      state.refs.forEach((ref, idx) => {
+        const n = idx + 1;
+        const rTag =
+          ref.width && ref.height && window.DirectApi?.matchClosestAspectRatio
+            ? ` (${window.DirectApi.matchClosestAspectRatio(ref.width, ref.height)})`
+            : '';
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = `chip-btn${state.sizeLockMode === `ref:${n}` ? ' active' : ''}`;
+        btn.textContent = `锁定图${n}${rTag}`;
+        btn.addEventListener('click', () => {
+          state.sizeLockMode = `ref:${n}`;
+          syncEditSizeLock();
+        });
+        row.appendChild(btn);
+      });
+
+      const manualBtn = document.createElement('button');
+      manualBtn.type = 'button';
+      manualBtn.className = `chip-btn${state.sizeLockMode === 'manual' ? ' active' : ''}`;
+      manualBtn.textContent = '手动自由比例';
+      manualBtn.addEventListener('click', () => {
+        state.sizeLockMode = 'manual';
+        syncEditSizeLock();
+      });
+      row.appendChild(manualBtn);
+    }
+
+    const statusEl = $('sizeLockStatus');
+    if (statusEl) {
+      if (!info.active) {
+        statusEl.textContent = info.reason;
+      } else if (info.width && info.height && info.matchedRatio) {
+        const exactNote = state.exactPixelMatch
+          ? ` · 出图后自动等比还原为精确 ${info.width}×${info.height} 像素`
+          : info.ratioDiffPct > 2
+            ? ' · 原图非标准比例，勾选右上角「精确还原原像素」可严格还原像素尺寸'
+            : '';
+        statusEl.innerHTML =
+          `${escapeHtml(info.reason)} · <strong>Image ${info.baseIndex} (${info.width}×${info.height}) → 已锁定 ${escapeHtml(info.matchedRatio)}</strong>${escapeHtml(exactNote)}`;
+      } else {
+        statusEl.innerHTML = `${escapeHtml(info.reason)} · <strong>正在读取 Image ${info.baseIndex} 尺寸...</strong>`;
+      }
+    }
+
+    if ($('ratioNote')) {
+      $('ratioNote').textContent = info.active && info.matchedRatio
+        ? `已按 Image ${info.baseIndex} 自动锁定 ${info.matchedRatio}（点下方比例可切手动）`
+        : '手动选择输出画幅比例';
+    }
+  }
+
+  function syncEditSizeLock() {
+    const info = getEditSizeLockInfo();
+    if (info.active && info.matchedRatio && state.aspectRatio !== info.matchedRatio) {
+      state.aspectRatio = info.matchedRatio;
+    }
+    renderEditSizeLockUI(info);
+    // Sync active highlight in ratio grid in-place without flashing other chips
+    document.querySelectorAll('#ratioGrid .ratio-btn').forEach((btn) => {
+      btn.classList.toggle('active', btn.dataset.ratio === state.aspectRatio);
+    });
+    updateRefCardBaseIndicators(info.active ? info.baseIndex : null);
+    return info;
   }
 
   function renderPresets() {
@@ -428,6 +640,7 @@
           syncTemplateDrawer('studio');
         }
         updateCharCount();
+        syncEditSizeLock();
         updateQuotePreview();
       });
       container.appendChild(btn);
@@ -443,11 +656,16 @@
       const [w, h] = RATIO_DIMS[r] || [14, 14];
       const btn = document.createElement('button');
       btn.type = 'button';
+      btn.dataset.ratio = r;
       btn.className = `ratio-btn${state.aspectRatio === r ? ' active' : ''}`;
       btn.innerHTML = `<span class="ratio-box" style="width:${w}px;height:${h}px"></span><span>${escapeHtml(r)}</span>`;
       btn.addEventListener('click', () => {
         state.aspectRatio = r;
+        if (state.mode === 'edit' && state.sizeLockMode !== 'manual') {
+          state.sizeLockMode = 'manual';
+        }
         renderOptions();
+        syncEditSizeLock();
       });
       ratioGrid.appendChild(btn);
     });
@@ -540,12 +758,23 @@
         if (ref.kind === 'upload') URL.revokeObjectURL(ref.previewUrl);
         state.refs.splice(idx, 1);
         renderRefs();
+        syncEditSizeLock();
         updateQuotePreview();
       });
 
       card.append(img, badge, removeBtn);
 
       if (state.mode === 'edit') {
+        const dimBtn = document.createElement('button');
+        dimBtn.type = 'button';
+        dimBtn.className = 'ref-dim-btn';
+        dimBtn.textContent = ref.width && ref.height ? `${ref.width}×${ref.height} · 设为底图` : '读取尺寸...';
+        dimBtn.addEventListener('click', () => {
+          state.sizeLockMode = `ref:${idx + 1}`;
+          syncEditSizeLock();
+        });
+        card.appendChild(dimBtn);
+
         const insertBtn = document.createElement('button');
         insertBtn.type = 'button';
         insertBtn.className = 'ref-insert';
@@ -556,6 +785,8 @@
 
       grid.appendChild(card);
     });
+    const info = getEditSizeLockInfo();
+    updateRefCardBaseIndicators(info.active ? info.baseIndex : null);
   }
 
   function insertTextAtCursor(token) {
@@ -571,6 +802,7 @@
     ta.focus();
     ta.setSelectionRange(cursor, cursor);
     updateCharCount();
+    syncEditSizeLock();
   }
 
   function addUploadFiles(fileList) {
@@ -585,22 +817,29 @@
 
     for (const file of files) {
       if (state.refs.length >= limit) break;
-      state.refs.push({
+      const item = {
         kind: 'upload',
         file,
         previewUrl: URL.createObjectURL(file),
-      });
+        width: null,
+        height: null,
+      };
+      state.refs.push(item);
+      measureRefDimensions(item);
     }
     renderRefs();
+    syncEditSizeLock();
     updateQuotePreview();
   }
 
-  function addLocalAssetRef(filename, targetMode) {
+  function addLocalAssetRef(filename, targetMode, assetMeta = null) {
     state.mode = targetMode;
     const item = {
       kind: 'local',
       filename,
-      previewUrl: `/outputs/${encodeURIComponent(filename)}`,
+      previewUrl: assetMeta?.url || `/outputs/${encodeURIComponent(filename)}`,
+      width: Number(assetMeta?.width) || null,
+      height: Number(assetMeta?.height) || null,
     };
     if (targetMode === 'layer-decomposition') {
       state.refs.forEach((r) => r.kind === 'upload' && URL.revokeObjectURL(r.previewUrl));
@@ -609,6 +848,7 @@
       if (state.refs.length >= 10) state.refs.shift();
       state.refs.push(item);
     }
+    measureRefDimensions(item);
     renderModeUI();
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
@@ -749,7 +989,10 @@
     const costLabel = job.cost ? `实付 ${formatCost(job.cost)}` : '已完成';
     badge.textContent = costLabel;
     const p = job.params || {};
-    subtitle.textContent = `${job.mode} · ${p.resolution || ''} ${p.aspect_ratio || ''} · ${formatTime(job.completed_at || job.created_at)}`;
+    const firstAsset = (job.assets || [])[0];
+    const dimTag = firstAsset?.width && firstAsset?.height ? ` · ${firstAsset.width}×${firstAsset.height}` : '';
+    const lockTag = p.size_lock?.base_index ? ` · 锁定图${p.size_lock.base_index}` : '';
+    subtitle.textContent = `${job.mode} · ${p.resolution || ''} ${p.aspect_ratio || ''}${dimTag}${lockTag} · ${formatTime(job.completed_at || job.created_at)}`;
 
     const assets = job.assets || [];
     const useChecker = p.background === 'transparent' || job.mode === 'layer-decomposition';
@@ -942,6 +1185,7 @@
     $('generateBtnLabel').textContent = state.refs.length ? '上传参考图并提交...' : '提交任务中...';
 
     try {
+      const lockInfo = state.mode === 'edit' ? syncEditSizeLock() : null;
       const fd = new FormData();
       fd.append('mode', state.mode);
       fd.append('prompt', prompt);
@@ -950,6 +1194,10 @@
       fd.append('output_format', state.outputFormat);
       fd.append('background', state.background);
       fd.append('num_outputs', String(state.numOutputs));
+      if (state.mode === 'edit') {
+        fd.append('size_lock_mode', state.sizeLockMode);
+        fd.append('exact_pixel_match', String(Boolean(state.exactPixelMatch && lockInfo?.active)));
+      }
       appendRefsToFormData(fd, state.refs);
 
       const data = await apiJson('/api/generate', {
@@ -1227,6 +1475,7 @@
     let usedVision = false;
 
     try {
+      const lockInfo = state.mode === 'edit' ? getEditSizeLockInfo() : null;
       const fetchOpts = { method: 'POST' };
       if (state.refs.length > 0) {
         const fd = new FormData();
@@ -1239,6 +1488,13 @@
         fd.append('template_id', tplId);
         if (customTpl) fd.append('custom_template', customTpl);
         fd.append('ref_count', String(state.refs.length));
+        if (lockInfo?.active && lockInfo.baseIndex) {
+          fd.append('base_image_index', String(lockInfo.baseIndex));
+          if (lockInfo.width && lockInfo.height) {
+            fd.append('base_image_width', String(lockInfo.width));
+            fd.append('base_image_height', String(lockInfo.height));
+          }
+        }
         appendRefsToFormData(fd, state.refs);
         fetchOpts.body = fd;
       } else {
@@ -1272,6 +1528,7 @@
             state.previousPrompt = prevDraft;
             $('promptInput').value = stripBoldMarkers(evt.prompt || streamedText);
             updateCharCount();
+            syncEditSizeLock();
             finalModel = evt.model || '';
             usedVision = Boolean(evt.used_vision);
           }
@@ -1308,6 +1565,7 @@
     $('undoEnhanceBtn').classList.add('hidden');
     $('enhanceHint').classList.add('hidden');
     updateCharCount();
+    syncEditSizeLock();
   }
 
   /* ==================== Video Studio (Seedance 2.5/2.0 & Wan 3.0/2.7/2.6) ==================== */
@@ -2684,7 +2942,14 @@
       addUploadFiles(e.dataTransfer?.files);
     });
 
-    $('promptInput').addEventListener('input', updateCharCount);
+    $('promptInput').addEventListener('input', () => {
+      updateCharCount();
+      syncEditSizeLock();
+    });
+    $('exactPixelMatchCheck')?.addEventListener('change', (e) => {
+      state.exactPixelMatch = e.target.checked;
+      syncEditSizeLock();
+    });
     $('numOutputsRange').addEventListener('input', (e) => {
       state.numOutputs = Number(e.target.value);
       $('numOutputsVal').textContent = String(state.numOutputs);
@@ -2716,6 +2981,7 @@
         if (isKnownPreset) {
           $('promptInput').value = matched.text;
           updateCharCount();
+          syncEditSizeLock();
           updateQuotePreview();
         }
       }
@@ -3025,7 +3291,7 @@
     $('stageEditBtn').addEventListener('click', () => {
       const job = state.jobs.find((j) => j.id === state.activeJobId);
       const asset = job?.assets?.[0];
-      if (asset?.filename) addLocalAssetRef(asset.filename, 'edit');
+      if (asset?.filename) addLocalAssetRef(asset.filename, 'edit', asset);
     });
 
     $('stageVideoBtn')?.addEventListener('click', () => {
@@ -3037,7 +3303,7 @@
     $('stageLayerBtn').addEventListener('click', () => {
       const job = state.jobs.find((j) => j.id === state.activeJobId);
       const asset = job?.assets?.[0];
-      if (asset?.filename) addLocalAssetRef(asset.filename, 'layer-decomposition');
+      if (asset?.filename) addLocalAssetRef(asset.filename, 'layer-decomposition', asset);
     });
 
     $('stageWriteBtn').addEventListener('click', () => {
@@ -3052,6 +3318,10 @@
       $('promptInput').value = job.prompt || '';
       const p = job.params || {};
       if (p.aspect_ratio) state.aspectRatio = p.aspect_ratio;
+      if (p.size_lock?.mode) state.sizeLockMode = p.size_lock.mode;
+      if (p.size_lock?.exact_pixel_match !== undefined) {
+        state.exactPixelMatch = Boolean(p.size_lock.exact_pixel_match);
+      }
       if (p.resolution) {
         if (job.mode === 'layer-decomposition') state.layerResolution = p.resolution;
         else state.resolution = p.resolution;
@@ -3060,6 +3330,7 @@
       if (p.background) state.background = p.background;
       updateCharCount();
       renderOptions();
+      syncEditSizeLock();
     });
 
     $('refreshHistoryBtn').addEventListener('click', async () => {

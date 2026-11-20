@@ -17,6 +17,279 @@
     'layer-decomposition': 'bytedance/seedream-5.5/layer-decomposition',
   };
   const ASPECT_RATIOS = ['1:1', '4:3', '3:4', '16:9', '9:16', '3:2', '2:3', '21:9'];
+  const ASPECT_RATIO_VALUES = {
+    '1:1': 1.0,
+    '4:3': 4.0 / 3.0,
+    '3:4': 3.0 / 4.0,
+    '16:9': 16.0 / 9.0,
+    '9:16': 9.0 / 16.0,
+    '3:2': 3.0 / 2.0,
+    '2:3': 2.0 / 3.0,
+    '21:9': 21.0 / 9.0,
+  };
+  const CN_NUM_MAP = {
+    一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10,
+    '①': 1, '②': 2, '③': 3, '④': 4, '⑤': 5, '⑥': 6, '⑦': 7, '⑧': 8, '⑨': 9, '⑩': 10,
+  };
+  const EN_ORD_MAP = {
+    first: 1, second: 2, third: 3, fourth: 4, fifth: 5,
+    sixth: 6, seventh: 7, eighth: 8, ninth: 9, tenth: 10,
+  };
+
+  function parseRefNum(token) {
+    const s = String(token || '').trim().toLowerCase();
+    if (CN_NUM_MAP[s]) return CN_NUM_MAP[s];
+    if (EN_ORD_MAP[s]) return EN_ORD_MAP[s];
+    const n = Number(s);
+    return Number.isInteger(n) && n >= 1 && n <= 10 ? n : null;
+  }
+
+  function matchClosestAspectRatio(width, height) {
+    const w = Number(width);
+    const h = Number(height);
+    if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return '1:1';
+    const target = w / h;
+    let best = '1:1';
+    let bestDist = Infinity;
+    for (const r of ASPECT_RATIOS) {
+      const dist = Math.abs(Math.log(target / ASPECT_RATIO_VALUES[r]));
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = r;
+      }
+    }
+    return best;
+  }
+
+  function normalizeImageRefTokens(prompt) {
+    let text = String(prompt || '');
+    if (!text) return '';
+    text = text.replace(
+      /(^|[^A-Za-z0-9])@?(?:image|img|pic(?:ture)?|photo)\s*#?\s*(10|[1-9])(?![0-9])/gi,
+      (full, prefix, num) => {
+        const n = parseRefNum(num);
+        return n ? `${prefix}__IMG_${n}__` : full;
+      }
+    );
+    text = text.replace(
+      /\b(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth)\s+(?:image|pic(?:ture)?|photo|ref(?:erence)?)\b/gi,
+      (full, ord) => {
+        const n = parseRefNum(ord);
+        return n ? `__IMG_${n}__` : full;
+      }
+    );
+    text = text.replace(
+      /(?:参考)?图(?:片|像)?\s*(10|[1-9]|[一二三四五六七八九十①②③④⑤⑥⑦⑧⑨⑩])(?![0-9])/g,
+      (full, num) => {
+        const n = parseRefNum(num);
+        return n ? `__IMG_${n}__` : full;
+      }
+    );
+    text = text.replace(
+      /第\s*(10|[1-9]|[一二三四五六七八九十])\s*(?:张|幅)(?:参考|原|底)?(?:图片|照片|图像|图)?/g,
+      (full, num) => {
+        const n = parseRefNum(num);
+        return n ? `__IMG_${n}__` : full;
+      }
+    );
+    return text;
+  }
+
+  function detectEditBaseImage(prompt, refCount) {
+    const count = Number(refCount || 0);
+    if (!Number.isFinite(count) || count <= 0) return null;
+    if (count === 1) {
+      return { index: 1, confidence: 'high', reason: '单张编辑默认保持 Image 1 原尺寸' };
+    }
+    const norm = normalizeImageRefTokens(prompt);
+    if (!norm.trim()) {
+      return { index: 1, confidence: 'fallback', reason: '尚未填写指令，暂按 Image 1 锁定比例' };
+    }
+    const valid = (v) => {
+      const n = Number(v);
+      return Number.isInteger(n) && n >= 1 && n <= count ? n : null;
+    };
+
+    const explicitRules = [
+      [/(?:以|用|按|照|拿|将|把)?\s*__IMG_(\d+)__\s*(?:的)?(?:作为|当作|当成|当做|做为|做|作|为|是)\s*(?:主)?(?:底图|底|基底|画布|背景图|背景|主图|主画面|基准图|基准|尺寸基准|原尺寸)/g, (n) => `识别到明确指定 Image ${n} 为底图`],
+      [/(?:底图|基底|画布|主图|原?尺寸|大小|画幅|比例)\s*(?:保持|固定|锁定|按|照|用|取|是|为|跟随|沿用|看齐)\s*(?:第)?__IMG_(\d+)__/g, (n) => `识别到明确按 Image ${n} 固定尺寸`],
+      [/(?:保持|保留|固定|锁定|沿用|遵循|按照|按|照|维持)\s*__IMG_(\d+)__\s*(?:的)?(?:原?尺寸|大小|画幅|比例|构图|画面|背景|场景|整体|视角|机位|镜头|原图)/g, (n) => `识别到保留 Image ${n} 的原构图/尺寸`],
+      [/__IMG_(\d+)__\s*(?:的)?(?:原?尺寸|大小|画幅|比例|构图|背景|场景|画面|整体)\s*(?:保持)?(?:不变|固定|锁定|为主|做底|作底)/g, (n) => `识别到保持 Image ${n} 原构图/尺寸不变`],
+      [/(?:在\s*__IMG_(\d+)__\s*(?:的)?基础上|基于\s*__IMG_(\d+)__|以\s*__IMG_(\d+)__\s*为主)/g, (n) => `识别到以 Image ${n} 为基础编辑`],
+      [/\b(?:use|take|keep|set|treat)\s+__IMG_(\d+)__\s+(?:as\s+|for\s+)?(?:the\s+)?(?:base|canvas|background|scene|template|foundation|framing|composition|layout)\b/gi, (n) => `识别到以 Image ${n} 为底图/构图`],
+      [/__IMG_(\d+)__\s*\(\s*(?:base|canvas|scene|background|composition|framing)\b/gi, (n) => `识别到 Image ${n} 为底图场景`],
+      [/\b(?:keep|preserve|maintain|lock|match)\s+(?:everything\s+else\s+from\s+|the\s+)?(?:exact\s+|original\s+)?(?:size|dimensions?|aspect\s*ratio|framing|composition|layout|canvas|scene|background|camera\s+angle)[^.,;\n]{0,45}?\b(?:from|of|in)\s+__IMG_(\d+)__/gi, (n) => `识别到保持 Image ${n} 原构图/比例`],
+      [/\b(?:keep|preserve|maintain|lock|match)\s+__IMG_(\d+)__(?:'s|’s)?\s+(?:original\s+|exact\s+)?(?:size|dimensions?|aspect\s*ratio|framing|composition|layout|canvas|scene|background|everything)\b/gi, (n) => `识别到保持 Image ${n} 原构图/比例`],
+      [/\b(?:based\s+on|edit|modify|retouch|alter)\s+__IMG_(\d+)__\b/gi, (n) => `识别到以 Image ${n} 为编辑主体底图`],
+    ];
+    for (const [re, mkReason] of explicitRules) {
+      for (const m of norm.matchAll(re)) {
+        for (let i = 1; i < m.length; i += 1) {
+          const idx = valid(m[i]);
+          if (idx !== null) return { index: idx, confidence: 'high', reason: mkReason(idx) };
+        }
+      }
+    }
+
+    const transferVerbs =
+      '画到|放到|放进|放入|贴到|贴在|画在|放在|移到|移进|移入|加到|加进|加入到|加入|换到|' +
+      '套到|套在|穿到|穿在|戴到|戴在|安到|安在|装到|装在|弄到|搬到|搬进|塞到|塞进|嵌到|嵌入到|嵌入|' +
+      '融入到|融入|融合到|合成到|拼接到|叠加到|覆盖到|移植到|迁移到|应用到|用到|用在|投影到|投射到|' +
+      'ps到|p到|修到|补到|填到|填进|放回|画进|画入|导入到';
+    const reZhTransfer = new RegExp(
+      `__IMG_(\\d+)__[^。！？；\\n]{0,60}?(${transferVerbs})[^，。！？；\\n]{0,20}?__IMG_(\\d+)__`,
+      'gi'
+    );
+    for (const m of norm.matchAll(reZhTransfer)) {
+      const src = valid(m[1]);
+      const verb = m[2];
+      const dst = valid(m[3]);
+      if (dst !== null && src !== dst) {
+        return { index: dst, confidence: 'high', reason: `识别到「${verb} Image ${dst}」→ 以 Image ${dst} 为底图` };
+      }
+    }
+
+    const reZhBareDst = new RegExp(`(${transferVerbs})[^，。！？；\\n]{0,16}?__IMG_(\\d+)__`, 'gi');
+    for (const m of norm.matchAll(reZhBareDst)) {
+      const verb = m[1];
+      const dst = valid(m[2]);
+      if (dst !== null) {
+        return { index: dst, confidence: 'high', reason: `识别到「${verb} Image ${dst}」→ 以 Image ${dst} 为底图` };
+      }
+    }
+
+    const reZhToolReplace = /(?:用|拿|使用|采用|以)\s*__IMG_(\d+)__[^，。！？；\n]{0,36}?(?:替换掉|替换|换掉|取代|覆盖掉|覆盖|替代)[^，。！？；\n]{0,20}?__IMG_(\d+)__/g;
+    for (const m of norm.matchAll(reZhToolReplace)) {
+      const src = valid(m[1]);
+      const dst = valid(m[2]);
+      if (dst !== null && src !== dst) {
+        return { index: dst, confidence: 'high', reason: `识别到用 Image ${src} 替换 Image ${dst} → 以 Image ${dst} 为底图` };
+      }
+    }
+
+    const subjectFirstRules = [
+      [/(?:把|将)\s*__IMG_(\d+)__[^，。！？；\n]{0,36}?(?:换成|换为|替换成|替换为|改成|改为|变成|变为|改造成|更换为|更换成)[^，。！？；\n]{0,24}?__IMG_(\d+)__/g, (n) => `识别到修改主体为 Image ${n} → 以 Image ${n} 为底图`],
+      [/(?:给|帮|为|让|使|对|替)\s*__IMG_(\d+)__[^，。！？；\n]{0,30}?(?:换上|穿上|戴上|加上|配上|装上|套上|贴上|画上|添加|加入|换成|改成|替换成|拿着|举着|抱着|提着|换|改)[^，。！？；\n]{0,24}?__IMG_(\d+)__/g, (n) => `识别到在 Image ${n} 上修改 → 以 Image ${n} 为底图`],
+      [/__IMG_(\d+)__\s*(?:的[^，。！？；\n]{0,12})?(?:换成|替换成|替换为|改成|改为|换脸|换头|换装|换衣|换背景)\s*(?:为|成)?[^，。！？；\n]{0,10}?__IMG_(\d+)__/g, (n) => `识别到修改主体为 Image ${n} → 以 Image ${n} 为底图`],
+    ];
+    for (const [re, mkReason] of subjectFirstRules) {
+      for (const m of norm.matchAll(re)) {
+        const baseIdx = valid(m[1]);
+        const otherIdx = valid(m[2]);
+        if (baseIdx !== null && baseIdx !== otherIdx) {
+          return { index: baseIdx, confidence: 'high', reason: mkReason(baseIdx) };
+        }
+      }
+    }
+
+    const reEnTransfer =
+      /\b(?:put|place|draw|paint|paste|add|insert|transfer|blend|merge|composite|apply|overlay|copy|move|drop|integrate|superimpose)\b[^.;\n]{0,70}?__IMG_(\d+)__[^.;\n]{0,45}?\b(?:onto|into|on\s+top\s+of|on|in|to|over)\b[^.;\n]{0,25}?__IMG_(\d+)__/gi;
+    for (const m of norm.matchAll(reEnTransfer)) {
+      const src = valid(m[1]);
+      const dst = valid(m[2]);
+      if (dst !== null && src !== dst) {
+        return { index: dst, confidence: 'high', reason: `识别到将 Image ${src} 融合到 Image ${dst} → 以 Image ${dst} 为底图` };
+      }
+    }
+
+    const reEnReplace =
+      /\b(?:replace|swap|change|substitute)\b[^.;\n]{0,65}?(?:\b(?:in|of|on|from)\s+)?__IMG_(\d+)__[^.;\n]{0,45}?\b(?:with|to|into|using)\b[^.;\n]{0,35}?__IMG_(\d+)__/gi;
+    for (const m of norm.matchAll(reEnReplace)) {
+      const baseIdx = valid(m[1]);
+      const donorIdx = valid(m[2]);
+      if (baseIdx !== null && baseIdx !== donorIdx) {
+        return { index: baseIdx, confidence: 'high', reason: `识别到替换 Image ${baseIdx} 内容 → 以 Image ${baseIdx} 为底图` };
+      }
+    }
+
+    const reEnDress =
+      /\b(?:dress|clothe|equip)\b[^.;\n]{0,40}?__IMG_(\d+)__[^.;\n]{0,50}?\b(?:in|with)\b[^.;\n]{0,35}?__IMG_(\d+)__/gi;
+    for (const m of norm.matchAll(reEnDress)) {
+      const baseIdx = valid(m[1]);
+      const donorIdx = valid(m[2]);
+      if (baseIdx !== null && baseIdx !== donorIdx) {
+        return { index: baseIdx, confidence: 'high', reason: `识别到主体为 Image ${baseIdx} → 以 Image ${baseIdx} 为底图` };
+      }
+    }
+
+    const reEnTranslate = /\b(?:translat(?:e|ing)|convert(?:ing)?|transform(?:ing)?)\b[^.;\n]{0,60}?\bfrom\s+__IMG_(\d+)__/gi;
+    for (const m of norm.matchAll(reEnTranslate)) {
+      const baseIdx = valid(m[1]);
+      if (baseIdx !== null) {
+        return { index: baseIdx, confidence: 'medium', reason: `识别到转换底图为 Image ${baseIdx} → 以 Image ${baseIdx} 为底图` };
+      }
+    }
+
+    const reZhLoc = /在\s*__IMG_(\d+)__\s*(?:的)?(?:原图|画面|场景|背景|环境|图片|照片|图)?(?:里面|里|中|上|内)/g;
+    for (const m of norm.matchAll(reZhLoc)) {
+      const idx = valid(m[1]);
+      if (idx !== null) {
+        return { index: idx, confidence: 'medium', reason: `识别到编辑场景位于 Image ${idx} → 以 Image ${idx} 为底图` };
+      }
+    }
+
+    const mentioned = [];
+    const scores = {};
+    const baseCues = [
+      '底图', '画布', '背景', '场景', '构图', '画面', '环境', '原图', '主图', '视角', '机位', '街道', '房间',
+      'canvas', 'base', 'background', 'scene', 'composition', 'framing', 'setting', 'environment', 'layout',
+    ];
+    const donorCues = [
+      '参考', '素材', '的脸', '脸部', '五官', '发型', '身材', '服装', '衣服', '帽子', '徽章', 'logo', '元素', '贴纸',
+      'reference', 'face', 'hair', 'hairstyle', 'body', 'physique', 'outfit', 'product', 'sticker', 'overlay',
+    ];
+    const lowerNorm = norm.toLowerCase();
+    for (const m of norm.matchAll(/__IMG_(\d+)__/g)) {
+      const idx = valid(m[1]);
+      if (idx === null) continue;
+      if (!mentioned.includes(idx)) {
+        mentioned.push(idx);
+        scores[idx] = 0;
+      }
+      const start = m.index || 0;
+      const rawLeft = lowerNorm.slice(Math.max(0, start - 18), start);
+      const leftParts = rawLeft.split(/[，,。.;；！!？?+＋、\n]|__img_\d+__/);
+      const leftCtx = leftParts[leftParts.length - 1] || '';
+      const rawRight = lowerNorm.slice(start + m[0].length, Math.min(lowerNorm.length, start + m[0].length + 14));
+      const rightParts = rawRight.split(/[，,。.;；！!？?+＋、\n]|__img_\d+__|\s+(?:holding|with|and|using)\b/);
+      const rightCtx = rightParts[0] || '';
+      const win = `${leftCtx} ${rightCtx}`;
+      baseCues.forEach((kw) => { if (win.includes(kw)) scores[idx] += 3; });
+      donorCues.forEach((kw) => { if (win.includes(kw)) scores[idx] -= 1; });
+    }
+
+    const entries = Object.entries(scores).map(([k, v]) => [Number(k), v]);
+    if (entries.length >= 2) {
+      entries.sort((a, b) => (b[1] - a[1]) || (mentioned.indexOf(a[0]) - mentioned.indexOf(b[0])));
+      const [bestIdx, bestScore] = entries[0];
+      const secondScore = entries[1][1];
+      if (bestScore > secondScore && (bestScore > 0 || secondScore < 0)) {
+        return { index: bestIdx, confidence: 'medium', reason: `根据语义角色识别 Image ${bestIdx} 为场景/底图` };
+      }
+    }
+
+    if (mentioned.length === 1) {
+      const onlyIdx = mentioned[0];
+      return { index: onlyIdx, confidence: 'medium', reason: `提示词仅提及 Image ${onlyIdx} → 以 Image ${onlyIdx} 为底图` };
+    }
+
+    return {
+      index: 1,
+      confidence: 'fallback',
+      reason: '未检测到明确底图指向，默认参考 Image 1（可在上方或卡片切换）',
+    };
+  }
+
+  function appendBaseCanvasLockHint(prompt, baseIndex) {
+    const clean = String(prompt || '').trim();
+    if (!clean || !baseIndex || baseIndex < 1) return clean;
+    const hint =
+      ` Keep Image ${baseIndex} as the base canvas and strictly preserve Image ${baseIndex}'s ` +
+      'original framing, camera perspective, and natural proportions without stretching, squashing, or aspect-ratio distortion.';
+    if (clean.length + hint.length > 5000) return clean;
+    if (clean.includes(`Keep Image ${baseIndex} as the base canvas`)) return clean;
+    return clean + hint;
+  }
   const IMAGE_RESOLUTIONS = ['1k', '1.5k', '2k'];
   const LAYER_RESOLUTIONS = ['auto', '1k', '1.5k', '2k'];
   const OUTPUT_FORMATS = ['png', 'jpeg'];
@@ -921,6 +1194,59 @@
     });
   }
 
+  async function measureBlobDimensions(blob) {
+    try {
+      const img = await decodeHtmlImage(blob);
+      const w = img.naturalWidth || img.width || 0;
+      const h = img.naturalHeight || img.height || 0;
+      return w > 0 && h > 0 ? { width: w, height: h } : null;
+    } catch {
+      return null;
+    }
+  }
+
+  async function fitBlobToExactSize(blob, targetWidth, targetHeight, outputFormat = 'png') {
+    const tw = Math.round(Number(targetWidth || 0));
+    const th = Math.round(Number(targetHeight || 0));
+    if (!blob || tw <= 0 || th <= 0) return { blob, width: tw, height: th };
+    try {
+      const img = await decodeHtmlImage(blob);
+      const sw = img.naturalWidth || img.width || 0;
+      const sh = img.naturalHeight || img.height || 0;
+      if (sw <= 0 || sh <= 0 || (sw === tw && sh === th)) {
+        return { blob, width: sw || tw, height: sh || th };
+      }
+      // Center cover-crop (zero stretching) then resize to exact target pixels
+      const srcRatio = sw / sh;
+      const dstRatio = tw / th;
+      let sx = 0;
+      let sy = 0;
+      let sWidth = sw;
+      let sHeight = sh;
+      if (srcRatio > dstRatio) {
+        sWidth = sh * dstRatio;
+        sx = (sw - sWidth) / 2;
+      } else if (srcRatio < dstRatio) {
+        sHeight = sw / dstRatio;
+        sy = (sh - sHeight) / 2;
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = tw;
+      canvas.height = th;
+      const ctx = canvas.getContext('2d');
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(img, sx, sy, sWidth, sHeight, 0, 0, tw, th);
+      const outMime = outputFormat === 'jpeg' ? 'image/jpeg' : 'image/png';
+      const outBlob = await new Promise((res) =>
+        canvas.toBlob((b) => res(b || blob), outMime, outputFormat === 'jpeg' ? 0.94 : undefined)
+      );
+      return { blob: outBlob, width: tw, height: th, mime: outMime };
+    } catch {
+      return { blob, width: tw, height: th };
+    }
+  }
+
   function blobToDataUrl(blob) {
     return new Promise((res, rej) => {
       const fr = new FileReader();
@@ -1469,6 +1795,8 @@
     targetModel = '',
     durationSeconds = null,
     mediaType = 'image',
+    baseImageIndex = null,
+    baseImageSize = null,
   }) {
     const styleNote = STYLE_INSTRUCTIONS[style] || STYLE_INSTRUCTIONS.none;
     const langNote =
@@ -1514,9 +1842,19 @@
         modeNote = `This is a Text-to-Video generation prompt (target model: ${targetModel || 'video'}).${durHint}`;
       }
     } else if (mode === 'edit') {
+      const dimText =
+        baseImageSize && baseImageSize[0] > 0 && baseImageSize[1] > 0
+          ? ` (${baseImageSize[0]}x${baseImageSize[1]})`
+          : '';
+      const baseNote =
+        baseImageIndex && Number(baseImageIndex) >= 1
+          ? ` IMPORTANT CANVAS LOCK: Image ${baseImageIndex}${dimText} is the locked base canvas; ` +
+            `explicitly state that Image ${baseImageIndex} serves as the base scene/canvas and preserve ` +
+            `Image ${baseImageIndex}'s original framing, composition, camera perspective, and natural proportions without stretching or distortion.`
+          : '';
       modeNote =
         `This is an image-editing instruction with ${Math.max(1, refCount)} reference image(s). ` +
-        'Preserve existing markers like "Image 1", "Image 2" and separate what changes from what stays unchanged.';
+        `Preserve existing markers like "Image 1", "Image 2" and separate what changes from what stays unchanged.${baseNote}`;
     } else {
       modeNote = 'This is a text-to-image generation prompt for Seedream 5.5.';
     }
@@ -1814,12 +2152,25 @@
                   : 'png';
           const fname = `${localId}_${i}.${ext}`;
           let storedIdb = false;
+          let finalMime = mime;
+          let finalW = ra.width;
+          let finalH = ra.height;
+          const sizeLockCfg = job.params?.size_lock;
+          const exactW = sizeLockCfg?.exact_pixel_match ? Number(sizeLockCfg.base_width || 0) : 0;
+          const exactH = sizeLockCfg?.exact_pixel_match ? Number(sizeLockCfg.base_height || 0) : 0;
           // Skip storing large video binaries inside mobile browser IndexedDB; stream directly via remote signed URL
           if (!isVideo) {
             try {
               const rImg = await fetch(ra.url);
               if (rImg.ok) {
-                const blob = await rImg.blob();
+                let blob = await rImg.blob();
+                if (exactW > 0 && exactH > 0) {
+                  const fitted = await fitBlobToExactSize(blob, exactW, exactH, job.params?.output_format || 'png');
+                  blob = fitted.blob;
+                  finalW = fitted.width;
+                  finalH = fitted.height;
+                  if (fitted.mime) finalMime = fitted.mime;
+                }
                 await idbPut(fname, blob);
                 storedIdb = true;
               }
@@ -1833,9 +2184,9 @@
             url: storedIdb ? (await getBlobObjectUrl(fname)) || ra.url : ra.url,
             remote_url: ra.url,
             stored_idb: storedIdb,
-            mime,
-            width: ra.width,
-            height: ra.height,
+            mime: finalMime,
+            width: finalW,
+            height: finalH,
             layer: ra.layer || null,
           });
         }
@@ -2170,14 +2521,55 @@
           ref_count: image_uris.length,
         };
       } else {
-        const aspect_ratio = String(fd.get('aspect_ratio') || '1:1');
+        let aspect_ratio = String(fd.get('aspect_ratio') || '1:1');
         const resolution = String(fd.get('resolution') || (mode === 'layer-decomposition' ? 'auto' : '2k'));
         const output_format = String(fd.get('output_format') || 'png');
         const background = String(fd.get('background') || 'auto');
         const num_outputs = Number(fd.get('num_outputs') || 10);
+        const sizeLockMode = String(fd.get('size_lock_mode') || 'manual').trim().toLowerCase();
+        const exactPixelMatch = parseBool(fd.get('exact_pixel_match'), false);
+        let sizeLockMeta = null;
+        let effectivePrompt = prompt;
+
+        if (mode === 'edit' && collected.length && sizeLockMode !== 'manual') {
+          let lockedIdx = null;
+          let lockReason = '';
+          if (sizeLockMode === 'auto') {
+            const det = detectEditBaseImage(prompt, collected.length);
+            if (det) {
+              lockedIdx = det.index;
+              lockReason = det.reason || '';
+            }
+          } else if (sizeLockMode.startsWith('ref:')) {
+            const parsed = Number(sizeLockMode.slice(4));
+            if (Number.isInteger(parsed) && parsed >= 1 && parsed <= collected.length) {
+              lockedIdx = parsed;
+              lockReason = `手动锁定 Image ${lockedIdx} 原尺寸`;
+            }
+          }
+          if (lockedIdx !== null) {
+            const dims = await measureBlobDimensions(collected[lockedIdx - 1].blob);
+            const baseW = dims?.width || null;
+            const baseH = dims?.height || null;
+            if (baseW && baseH) {
+              aspect_ratio = matchClosestAspectRatio(baseW, baseH);
+            }
+            effectivePrompt = appendBaseCanvasLockHint(prompt, lockedIdx);
+            sizeLockMeta = {
+              mode: sizeLockMode,
+              base_index: lockedIdx,
+              base_width: baseW,
+              base_height: baseH,
+              matched_aspect_ratio: aspect_ratio,
+              exact_pixel_match: Boolean(exactPixelMatch && baseW && baseH),
+              reason: lockReason,
+            };
+          }
+        }
+
         const built = buildSeedreamPayload({
           mode,
-          prompt,
+          prompt: effectivePrompt,
           aspect_ratio,
           resolution,
           output_format,
@@ -2189,12 +2581,13 @@
         taskInput = built.taskInput;
         localId = `sd_${randHex(12)}`;
         recordParams = {
-          aspect_ratio,
+          aspect_ratio: taskInput.aspect_ratio || aspect_ratio,
           resolution,
           output_format: taskInput.output_format || output_format,
           background: taskInput.background || background,
           ref_count: image_uris.length,
           num_outputs: taskInput.num_outputs || null,
+          size_lock: sizeLockMeta,
         };
       }
 
@@ -2275,6 +2668,9 @@
       let mediaType = 'image';
       let durationSeconds = null;
       let refCount = 0;
+      let baseImageIndex = null;
+      let baseImageW = null;
+      let baseImageH = null;
       let blobs = [];
       if (options.body instanceof FormData) {
         const fd = options.body;
@@ -2289,6 +2685,9 @@
         const rawDur = fd.get('duration_seconds');
         durationSeconds = rawDur !== null && rawDur !== '' ? Number(rawDur) : null;
         refCount = Number(fd.get('ref_count') || 0);
+        baseImageIndex = fd.get('base_image_index') ? Number(fd.get('base_image_index')) : null;
+        baseImageW = fd.get('base_image_width') ? Number(fd.get('base_image_width')) : null;
+        baseImageH = fd.get('base_image_height') ? Number(fd.get('base_image_height')) : null;
         blobs = await collectFormBlobs(fd, 6);
         refCount = Math.max(refCount, blobs.length);
       } else {
@@ -2303,6 +2702,9 @@
         mediaType = String(b.media_type || 'image');
         durationSeconds = b.duration_seconds !== undefined && b.duration_seconds !== null ? Number(b.duration_seconds) : null;
         refCount = Number(b.ref_count || 0);
+        baseImageIndex = b.base_image_index ? Number(b.base_image_index) : null;
+        baseImageW = b.base_image_width ? Number(b.base_image_width) : null;
+        baseImageH = b.base_image_height ? Number(b.base_image_height) : null;
       }
       const cleaned = prompt.trim();
       if (!cleaned) throw makeApiError('请先在输入框写几句简单描述，再点击 AI 扩写。', 400);
@@ -2310,6 +2712,7 @@
       const imageUrls = await Promise.all(
         blobs.map(async (b) => (await processImageBlob(b.blob, b.mime, { maxDim: 1280, forceJpeg: true })).dataUrl)
       );
+      const baseImageSize = baseImageW > 0 && baseImageH > 0 ? [baseImageW, baseImageH] : null;
       const messages = buildEnhancerMessages({
         userPrompt: cleaned,
         mode,
@@ -2322,6 +2725,8 @@
         targetModel,
         durationSeconds,
         mediaType,
+        baseImageIndex,
+        baseImageSize,
       });
 
       const res = await streamOpenAIChat(
@@ -2516,6 +2921,10 @@
     CLOUD_URL,
     request,
     stream,
+    normalizeImageRefTokens,
+    detectEditBaseImage,
+    matchClosestAspectRatio,
+    appendBaseCanvasLockHint,
     isKnownStaticHost: () =>
       window.location.hostname.endsWith('.github.io') ||
       window.location.hostname.endsWith('.pages.dev') ||

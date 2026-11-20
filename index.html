@@ -14,7 +14,7 @@
   <link rel="apple-touch-icon" sizes="180x180" href="./static/icons/apple-touch-icon.png" />
   <link rel="icon" type="image/svg+xml" href="./static/icons/icon.svg" />
 
-  <link rel="stylesheet" href="./static/styles.css?v=20261117-v9" />
+  <link rel="stylesheet" href="./static/styles.css?v=20261120-v10" />
 </head>
 <body>
   <div class="app-shell">
@@ -156,11 +156,22 @@
           <div class="preset-row" id="presetRow"></div>
         </div>
 
-        <!-- Aspect Ratio -->
+        <!-- Aspect Ratio & Base-Image Size Lock -->
         <div id="ratioGroup" class="field-group">
+          <div id="editSizeLockPanel" class="size-lock-box hidden">
+            <div class="size-lock-top">
+              <span class="size-lock-title">📐 保持底图原尺寸</span>
+              <label class="check-pill size-lock-exact-toggle" title="勾选后，出图保存时按不拉伸等比裁切并严格还原为底图的原始 W×H 像素尺寸">
+                <input id="exactPixelMatchCheck" type="checkbox" />
+                <span>精确还原原像素 (W×H)</span>
+              </label>
+            </div>
+            <div id="sizeLockRow" class="chip-row size-lock-chips"></div>
+            <p id="sizeLockStatus" class="size-lock-status"></p>
+          </div>
           <div class="field-header">
             <label>画幅比例</label>
-            <span class="field-hint" id="ratioNote">编辑模式需手动选择输出比例</span>
+            <span class="field-hint" id="ratioNote">编辑模式自动按底图比例防变形</span>
           </div>
           <div class="ratio-grid" id="ratioGrid"></div>
         </div>
@@ -798,7 +809,7 @@
     </div>
   </div>
 
-  <script src="./static/direct_api.js?v=20261117-v9"></script>
-  <script src="./static/app.js?v=20261117-v9"></script>
+  <script src="./static/direct_api.js?v=20261120-v10"></script>
+  <script src="./static/app.js?v=20261120-v10"></script>
 </body>
 </html>
