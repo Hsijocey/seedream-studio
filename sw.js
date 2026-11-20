@@ -1,4 +1,4 @@
-const CACHE_NAME = 'seedream-studio-v12';
+const CACHE_NAME = 'seedream-studio-v13';
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();
