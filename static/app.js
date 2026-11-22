@@ -169,10 +169,39 @@
     activeWritingId: null,
     writingAttachments: [],
     isWritingSending: false,
+    // Personal Asset Library state
+    libraryAssets: [],
+    libraryFilter: 'all',
+    librarySearch: '',
+    isLibraryUploading: false,
+    pickerTarget: 'studio',
+    pickerFilter: 'all',
+    pickerSearch: '',
+    pickerSelectedIds: [],
+    toastTimer: null,
     cloudMode: false,
   };
 
+  const LIB_CATEGORY_LABELS = {
+    character: '人物 / 角色',
+    scene: '场景 / 背景',
+    style: '风格 / 道具',
+    other: '其他素材',
+  };
+
   const $ = (id) => document.getElementById(id);
+
+  function showToast(msg, durationMs = 2200) {
+    const el = $('studioToast');
+    if (!el || !msg) return;
+    el.textContent = msg;
+    el.classList.remove('hidden');
+    if (state.toastTimer) window.clearTimeout(state.toastTimer);
+    state.toastTimer = window.setTimeout(() => {
+      el.classList.add('hidden');
+      state.toastTimer = null;
+    }, durationMs);
+  }
 
   function isImageFile(file) {
     return Boolean(file && (file.type?.startsWith('image/') || /\.(png|jpe?g|webp|gif|heic)$/i.test(file.name || '')));
@@ -184,6 +213,8 @@
     refs.forEach((ref) => {
       if (ref.kind === 'local') {
         order.push(`local:${ref.filename}`);
+      } else if (ref.kind === 'library') {
+        order.push(`library:${ref.filename}`);
       } else {
         fd.append('images', ref.file);
         order.push(`upload:${uploadIdx}`);
@@ -388,6 +419,7 @@
     $('generateBtnLabel').textContent = meta.btn;
 
     const isRefMode = state.mode === 'edit' || state.mode === 'layer-decomposition';
+    $('t2iLibraryShortcut')?.classList.toggle('hidden', isRefMode);
     $('refSection').classList.toggle('hidden', !isRefMode);
     $('ratioGroup').classList.toggle('hidden', state.mode === 'layer-decomposition');
     $('backgroundGroup').classList.toggle('hidden', state.mode === 'layer-decomposition');
@@ -787,6 +819,7 @@
     });
     const info = getEditSizeLockInfo();
     updateRefCardBaseIndicators(info.active ? info.baseIndex : null);
+    renderQuickLibraryStrip();
   }
 
   function insertTextAtCursor(token) {
@@ -978,6 +1011,7 @@
       actions.classList.remove('hidden');
       $('stageSaveBtn').classList.add('hidden');
       $('stageShareBtn').classList.add('hidden');
+      $('stageAddLibraryBtn')?.classList.add('hidden');
       $('stageEditBtn').classList.add('hidden');
       $('stageVideoBtn').classList.add('hidden');
       $('stageLayerBtn').classList.add('hidden');
@@ -1025,12 +1059,29 @@
         meta.className = 'layer-meta';
         const nameSpan = document.createElement('span');
         nameSpan.textContent = asset.layer?.name || (idx === 0 ? 'Base 底图' : `Layer ${idx}`);
+        const metaActions = document.createElement('span');
+        metaActions.style.display = 'inline-flex';
+        metaActions.style.gap = '6px';
+        metaActions.style.alignItems = 'center';
+
+        const favLayerBtn = document.createElement('button');
+        favLayerBtn.type = 'button';
+        const layerSaved = isOutputInLibrary(asset.filename);
+        favLayerBtn.textContent = layerSaved ? '★ 已存' : '☆ 存素材';
+        favLayerBtn.style.color = layerSaved ? '#86efac' : 'var(--text-muted)';
+        favLayerBtn.style.fontSize = '0.74rem';
+        favLayerBtn.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          saveOutputToLibrary(asset.filename, job.id, asset.layer?.name || job.prompt || `Layer ${idx}`);
+        });
+
         const dl = document.createElement('a');
         dl.href = asset.url;
         dl.download = asset.filename;
         dl.textContent = '下载';
         dl.style.color = 'var(--accent-bright)';
-        meta.append(nameSpan, dl);
+        metaActions.append(favLayerBtn, dl);
+        meta.append(nameSpan, metaActions);
 
         card.append(img, meta);
         grid.appendChild(card);
@@ -1040,6 +1091,13 @@
 
     actions.classList.remove('hidden');
     $('stageSaveBtn').classList.remove('hidden');
+    const addLibBtn = $('stageAddLibraryBtn');
+    if (addLibBtn) {
+      addLibBtn.classList.remove('hidden');
+      const saved = Boolean(firstAsset?.filename && isOutputInLibrary(firstAsset.filename));
+      addLibBtn.textContent = saved ? '✓ 已在素材库' : '⭐ 加入素材库';
+      addLibBtn.classList.toggle('saved-lib', saved);
+    }
     $('stageEditBtn').classList.remove('hidden');
     $('stageVideoBtn').classList.remove('hidden');
     $('stageLayerBtn').classList.remove('hidden');
@@ -1116,7 +1174,22 @@
         renderHistory();
       });
 
-      card.append(thumb, info, delBtn);
+      if (job.assets?.length && job.assets[0]?.filename) {
+        const asset0 = job.assets[0];
+        const saved = isOutputInLibrary(asset0.filename);
+        const favBtn = document.createElement('button');
+        favBtn.type = 'button';
+        favBtn.className = `history-fav${saved ? ' saved' : ''}`;
+        favBtn.textContent = saved ? '★' : '☆';
+        favBtn.title = saved ? '已在素材库中' : '加入素材库';
+        favBtn.addEventListener('click', async (ev) => {
+          ev.stopPropagation();
+          await saveOutputToLibrary(asset0.filename, job.id, job.prompt || '生成作品');
+        });
+        card.append(thumb, info, favBtn, delBtn);
+      } else {
+        card.append(thumb, info, delBtn);
+      }
       grid.appendChild(card);
     });
   }
@@ -1392,14 +1465,18 @@
   }
 
   function setWorkspace(ws) {
-    state.workspace = ['studio', 'video', 'writing'].includes(ws) ? ws : 'studio';
+    state.workspace = ['studio', 'library', 'video', 'writing'].includes(ws) ? ws : 'studio';
     document.querySelectorAll('[data-workspace]').forEach((btn) => {
       btn.classList.toggle('active', btn.dataset.workspace === state.workspace);
     });
     $('studioView').classList.toggle('hidden', state.workspace !== 'studio');
+    $('libraryView')?.classList.toggle('hidden', state.workspace !== 'library');
     $('videoView').classList.toggle('hidden', state.workspace !== 'video');
     $('writingView').classList.toggle('hidden', state.workspace !== 'writing');
     updateWritingWarnBadge();
+    if (state.workspace === 'library') {
+      renderLibraryWorkspace();
+    }
     if (state.workspace === 'writing') {
       const msgBox = $('writingMessages');
       msgBox.scrollTop = msgBox.scrollHeight;
@@ -2907,6 +2984,598 @@
     updateWritingWarnBadge();
   }
 
+  // =========================================================
+  // Personal Asset Library (素材库)
+  // =========================================================
+  function showLibraryError(msg) {
+    const el = $('libraryError');
+    if (!el) return;
+    if (!msg) {
+      el.classList.add('hidden');
+      el.textContent = '';
+    } else {
+      el.textContent = msg;
+      el.classList.remove('hidden');
+    }
+  }
+
+  function isOutputInLibrary(filename) {
+    if (!filename) return false;
+    return state.libraryAssets.some((a) => a.source_filename === filename);
+  }
+
+  function updateLibraryCountBadges() {
+    const total = state.libraryAssets.length;
+    const navBadge = $('navLibraryCount');
+    if (navBadge) {
+      navBadge.textContent = String(total);
+      navBadge.classList.toggle('hidden', total === 0);
+    }
+    const studioBtnCount = $('studioLibBtnCount');
+    if (studioBtnCount) studioBtnCount.textContent = String(total);
+    const totalBadge = $('libraryTotalCount');
+    if (totalBadge) totalBadge.textContent = String(total);
+  }
+
+  function filterLibraryItems(filter, searchQuery) {
+    const q = String(searchQuery || '').trim().toLowerCase();
+    return state.libraryAssets.filter((item) => {
+      if (filter === 'generated' && item.source !== 'generated') return false;
+      if (filter === 'upload' && item.source !== 'upload') return false;
+      if (['character', 'scene', 'style', 'other'].includes(filter) && item.category !== filter) return false;
+      if (q) {
+        const hay = `${item.name || ''} ${LIB_CATEGORY_LABELS[item.category] || ''}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+  }
+
+  function getLibraryAssetUrl(asset) {
+    return asset?.url || (asset?.filename ? `/library/${encodeURIComponent(asset.filename)}` : '');
+  }
+
+  function addLibraryAssetsToStudio(assets, { targetMode = null, switchWorkspace = false } = {}) {
+    const list = (Array.isArray(assets) ? assets : [assets]).filter(Boolean);
+    if (!list.length) return;
+    if (targetMode) {
+      state.mode = targetMode;
+    } else if (state.mode === 'text-to-image') {
+      state.mode = 'edit';
+    }
+    const limit = state.mode === 'layer-decomposition' ? 1 : 10;
+    if (limit === 1) {
+      state.refs.forEach((r) => r.kind === 'upload' && URL.revokeObjectURL(r.previewUrl));
+      state.refs = [];
+    }
+    let added = 0;
+    for (const asset of list) {
+      if (state.refs.length >= limit) {
+        if (limit === 1) break;
+        const dropped = state.refs.shift();
+        if (dropped?.kind === 'upload') URL.revokeObjectURL(dropped.previewUrl);
+      }
+      const item = {
+        kind: 'library',
+        libraryId: asset.id,
+        filename: asset.filename,
+        previewUrl: getLibraryAssetUrl(asset),
+        width: Number(asset.width) || null,
+        height: Number(asset.height) || null,
+      };
+      state.refs.push(item);
+      measureRefDimensions(item);
+      added += 1;
+    }
+    renderModeUI();
+    if (switchWorkspace) {
+      setWorkspace('studio');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+    if (added === 1) {
+      showToast(`已将「${list[0].name || '素材'}」加入 Image ${state.refs.length}`);
+    } else if (added > 1) {
+      showToast(`已按顺序加入 ${added} 张素材到参考图`);
+    }
+  }
+
+  function addLibraryAssetsToVideo(assets, { switchWorkspace = false } = {}) {
+    const list = (Array.isArray(assets) ? assets : [assets]).filter(Boolean);
+    if (!list.length) return;
+    const spec = getActiveVideoSpec();
+    if (state.videoMode === 'text-to-video') {
+      if (list.length > 2 && spec?.modes?.includes('reference-to-video')) {
+        state.videoMode = 'reference-to-video';
+      } else {
+        state.videoMode = 'image-to-video';
+      }
+    }
+    const limit = state.videoMode === 'image-to-video' ? (spec?.supports_last_frame ? 2 : 1) : 10;
+    if (limit === 1) {
+      state.videoRefs.forEach((r) => r.kind === 'upload' && URL.revokeObjectURL(r.previewUrl));
+      state.videoRefs = [];
+    }
+    let added = 0;
+    for (const asset of list) {
+      if (state.videoRefs.length >= limit) {
+        if (limit === 1) break;
+        const dropped = state.videoRefs.shift();
+        if (dropped?.kind === 'upload') URL.revokeObjectURL(dropped.previewUrl);
+      }
+      state.videoRefs.push({
+        kind: 'library',
+        libraryId: asset.id,
+        filename: asset.filename,
+        previewUrl: getLibraryAssetUrl(asset),
+      });
+      added += 1;
+    }
+    renderVideoModeUI();
+    if (switchWorkspace) {
+      setWorkspace('video');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+    showToast(`已加入 ${added} 张素材到视频参考图`);
+  }
+
+  function addLibraryAssetsToWriting(assets, { switchWorkspace = false } = {}) {
+    const list = (Array.isArray(assets) ? assets : [assets]).filter(Boolean);
+    if (!list.length) return;
+    let added = 0;
+    for (const asset of list) {
+      if (state.writingAttachments.length >= 4) {
+        const dropped = state.writingAttachments.shift();
+        if (dropped?.kind === 'upload') URL.revokeObjectURL(dropped.previewUrl);
+      }
+      state.writingAttachments.push({
+        kind: 'library',
+        libraryId: asset.id,
+        filename: asset.filename,
+        previewUrl: getLibraryAssetUrl(asset),
+      });
+      added += 1;
+    }
+    renderWritingAttachPreview();
+    if (switchWorkspace) {
+      setWorkspace('writing');
+      $('writingInput')?.focus();
+    }
+    showToast(`已加入 ${added} 张素材到写作配图`);
+  }
+
+  function renderQuickLibraryStrip() {
+    const strip = $('studioQuickLibraryStrip');
+    if (!strip) return;
+    updateLibraryCountBadges();
+    const items = state.libraryAssets.slice(0, 12);
+    if (!items.length) {
+      strip.innerHTML = '';
+      strip.classList.add('hidden');
+      return;
+    }
+    strip.classList.remove('hidden');
+    strip.innerHTML = '';
+    const activeFiles = new Set(state.refs.filter((r) => r.kind === 'library').map((r) => r.filename));
+    items.forEach((asset) => {
+      const inUse = activeFiles.has(asset.filename);
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = `quick-lib-thumb${inUse ? ' in-use' : ''}`;
+      btn.title = `点击加入参考图：${asset.name || '素材'}${asset.width && asset.height ? ` (${asset.width}×${asset.height})` : ''}`;
+
+      const img = document.createElement('img');
+      img.src = getLibraryAssetUrl(asset);
+      img.alt = asset.name || '素材';
+      img.loading = 'lazy';
+
+      const plus = document.createElement('span');
+      plus.className = 'quick-lib-plus';
+      plus.textContent = inUse ? '✓' : '+';
+
+      btn.append(img, plus);
+      btn.addEventListener('click', () => {
+        addLibraryAssetsToStudio([asset]);
+      });
+      strip.appendChild(btn);
+    });
+  }
+
+  async function uploadFilesToLibrary(fileList, categoryOverride = null) {
+    const files = Array.from(fileList || []).filter(isImageFile);
+    if (!files.length) return [];
+    if (state.isLibraryUploading) return [];
+
+    showLibraryError('');
+    state.isLibraryUploading = true;
+    const uploadBtn = $('libraryUploadBtn');
+    const prevLabel = uploadBtn ? uploadBtn.textContent : '';
+    if (uploadBtn) {
+      uploadBtn.disabled = true;
+      uploadBtn.textContent = '上传中...';
+    }
+
+    try {
+      const fd = new FormData();
+      const cat = categoryOverride || $('libraryUploadCategory')?.value || 'character';
+      fd.append('category', cat);
+      files.slice(0, 30).forEach((f) => fd.append('images', f));
+
+      const data = await apiJson('/api/library/upload', {
+        method: 'POST',
+        body: fd,
+      });
+      const created = data.items || [];
+      if (created.length) {
+        const createdIds = new Set(created.map((x) => x.id));
+        state.libraryAssets = [...created, ...state.libraryAssets.filter((x) => !createdIds.has(x.id))];
+        renderLibraryWorkspace();
+        renderQuickLibraryStrip();
+        renderStage();
+        renderHistory();
+        showToast(`✓ 已上传 ${created.length} 张素材到素材库`);
+      }
+      return created;
+    } catch (err) {
+      showLibraryError(err.message);
+      showToast(`上传失败：${err.message}`, 3200);
+      return [];
+    } finally {
+      state.isLibraryUploading = false;
+      if (uploadBtn) {
+        uploadBtn.disabled = false;
+        uploadBtn.textContent = prevLabel || '＋ 上传素材图片';
+      }
+    }
+  }
+
+  async function saveOutputToLibrary(filename, jobId = null, defaultName = '') {
+    if (!filename) return null;
+    try {
+      const data = await apiJson('/api/library/from-output', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          filename,
+          job_id: jobId,
+          name: String(defaultName || '').trim().slice(0, 36),
+          category: 'character',
+        }),
+      });
+      const item = data.item;
+      if (item) {
+        state.libraryAssets = [item, ...state.libraryAssets.filter((x) => x.id !== item.id)];
+        renderLibraryWorkspace();
+        renderQuickLibraryStrip();
+        renderStage();
+        renderHistory();
+      }
+      showToast(data.already_exists ? '✓ 该图已在素材库中' : '⭐ 已加入素材库，可随时生图调用');
+      return item;
+    } catch (err) {
+      showToast(`加入素材库失败：${err.message}`, 3200);
+      return null;
+    }
+  }
+
+  async function updateLibraryAssetMeta(assetId, patch) {
+    try {
+      const data = await apiJson(`/api/library/${encodeURIComponent(assetId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      });
+      if (data.item) {
+        const idx = state.libraryAssets.findIndex((x) => x.id === assetId);
+        if (idx !== -1) state.libraryAssets[idx] = data.item;
+        renderLibraryWorkspace();
+        renderQuickLibraryStrip();
+        if (!$('libraryPickerModal')?.classList.contains('hidden')) {
+          renderLibraryPicker();
+        }
+      }
+    } catch (err) {
+      showLibraryError(err.message);
+    }
+  }
+
+  async function deleteLibraryAsset(assetId) {
+    try {
+      await apiJson(`/api/library/${encodeURIComponent(assetId)}`, { method: 'DELETE' });
+      state.libraryAssets = state.libraryAssets.filter((x) => x.id !== assetId);
+      state.pickerSelectedIds = state.pickerSelectedIds.filter((id) => id !== assetId);
+      renderLibraryWorkspace();
+      renderQuickLibraryStrip();
+      renderStage();
+      renderHistory();
+      if (!$('libraryPickerModal')?.classList.contains('hidden')) {
+        renderLibraryPicker();
+      }
+      showToast('已从素材库移除');
+    } catch (err) {
+      showLibraryError(err.message);
+    }
+  }
+
+  function renderLibraryWorkspace() {
+    updateLibraryCountBadges();
+    const grid = $('libraryGrid');
+    if (!grid) return;
+
+    document.querySelectorAll('#libraryFilterBar [data-lib-filter]').forEach((btn) => {
+      btn.classList.toggle('active', btn.dataset.libFilter === state.libraryFilter);
+    });
+
+    const items = filterLibraryItems(state.libraryFilter, state.librarySearch);
+    grid.innerHTML = '';
+    if (!items.length) {
+      const emptyMsg = state.libraryAssets.length
+        ? '当前筛选条件下没有匹配的素材'
+        : '素材库还是空的：拖入图片上传，或在生图画布点击「⭐ 加入素材库」收藏作品';
+      grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1;padding:34px 12px;"><div class="empty-orb">🗂️</div><p>${escapeHtml(emptyMsg)}</p></div>`;
+      return;
+    }
+
+    items.forEach((asset) => {
+      const card = document.createElement('div');
+      card.className = 'library-card';
+
+      const thumb = document.createElement('div');
+      thumb.className = 'library-thumb';
+      const img = document.createElement('img');
+      const assetUrl = getLibraryAssetUrl(asset);
+      img.src = assetUrl;
+      img.alt = asset.name || '素材';
+      img.loading = 'lazy';
+      thumb.addEventListener('click', () => openLightbox(assetUrl));
+
+      const srcBadge = document.createElement('span');
+      srcBadge.className = `library-source-badge${asset.source === 'generated' ? ' generated' : ''}`;
+      srcBadge.textContent = asset.source === 'generated' ? '⭐ 生成' : '📤 上传';
+
+      thumb.append(img, srcBadge);
+      if (asset.width && asset.height) {
+        const dimBadge = document.createElement('span');
+        dimBadge.className = 'library-dim-badge';
+        dimBadge.textContent = `${asset.width}×${asset.height}`;
+        thumb.appendChild(dimBadge);
+      }
+
+      const delBtn = document.createElement('button');
+      delBtn.type = 'button';
+      delBtn.className = 'history-del';
+      delBtn.textContent = '✕';
+      delBtn.title = '从素材库删除';
+      delBtn.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        deleteLibraryAsset(asset.id);
+      });
+
+      const body = document.createElement('div');
+      body.className = 'library-card-body';
+
+      const nameRow = document.createElement('div');
+      nameRow.className = 'library-name-row';
+      const nameEl = document.createElement('span');
+      nameEl.className = 'library-name';
+      nameEl.textContent = asset.name || '未命名素材';
+      nameEl.title = asset.name || '未命名素材';
+
+      const editBtn = document.createElement('button');
+      editBtn.type = 'button';
+      editBtn.className = 'library-edit-btn';
+      editBtn.textContent = '✎';
+      editBtn.title = '重命名素材';
+      editBtn.addEventListener('click', () => {
+        const nextName = window.prompt('输入新的素材名称：', asset.name || '');
+        if (nextName !== null && nextName.trim() && nextName.trim() !== asset.name) {
+          updateLibraryAssetMeta(asset.id, { name: nextName.trim() });
+        }
+      });
+      nameRow.append(nameEl, editBtn);
+
+      const metaRow = document.createElement('div');
+      metaRow.className = 'library-meta-row';
+      const catSel = document.createElement('select');
+      catSel.className = 'library-cat-select';
+      catSel.title = '切换分类';
+      Object.entries(LIB_CATEGORY_LABELS).forEach(([val, label]) => {
+        const opt = document.createElement('option');
+        opt.value = val;
+        opt.textContent = label;
+        if ((asset.category || 'other') === val) opt.selected = true;
+        catSel.appendChild(opt);
+      });
+      catSel.addEventListener('change', () => {
+        updateLibraryAssetMeta(asset.id, { category: catSel.value });
+      });
+
+      const timeSpan = document.createElement('span');
+      timeSpan.textContent = formatTime(asset.created_at);
+      metaRow.append(catSel, timeSpan);
+
+      const actions = document.createElement('div');
+      actions.className = 'library-card-actions';
+
+      const useImgBtn = document.createElement('button');
+      useImgBtn.type = 'button';
+      useImgBtn.className = 'library-use-btn';
+      useImgBtn.textContent = '🎨 用来生图';
+      useImgBtn.title = '加入生图参考图并切到多图编辑';
+      useImgBtn.addEventListener('click', () => {
+        addLibraryAssetsToStudio([asset], { targetMode: 'edit', switchWorkspace: true });
+      });
+
+      const useVidBtn = document.createElement('button');
+      useVidBtn.type = 'button';
+      useVidBtn.className = 'library-mini-action';
+      useVidBtn.textContent = '🎬';
+      useVidBtn.title = '送去视频生成作为首帧/参考图';
+      useVidBtn.addEventListener('click', () => {
+        addLibraryAssetsToVideo([asset], { switchWorkspace: true });
+      });
+
+      const useWrtBtn = document.createElement('button');
+      useWrtBtn.type = 'button';
+      useWrtBtn.className = 'library-mini-action';
+      useWrtBtn.textContent = '✍️';
+      useWrtBtn.title = '作为配图发去自由写作';
+      useWrtBtn.addEventListener('click', () => {
+        addLibraryAssetsToWriting([asset], { switchWorkspace: true });
+      });
+
+      actions.append(useImgBtn, useVidBtn, useWrtBtn);
+      body.append(nameRow, metaRow, actions);
+      card.append(thumb, delBtn, body);
+      grid.appendChild(card);
+    });
+  }
+
+  function getPickerMaxCount() {
+    if (state.pickerTarget === 'studio') {
+      return state.mode === 'layer-decomposition' ? 1 : 10;
+    }
+    if (state.pickerTarget === 'studio-t2i') return 10;
+    if (state.pickerTarget === 'video') {
+      const spec = getActiveVideoSpec();
+      return state.videoMode === 'image-to-video' ? (spec?.supports_last_frame ? 2 : 1) : 10;
+    }
+    if (state.pickerTarget === 'writing') return 4;
+    return 10;
+  }
+
+  function openLibraryPicker(target = 'studio') {
+    state.pickerTarget = target;
+    state.pickerFilter = 'all';
+    state.pickerSearch = '';
+    state.pickerSelectedIds = [];
+    if ($('libraryPickerSearch')) $('libraryPickerSearch').value = '';
+
+    const titleMap = {
+      studio: state.mode === 'layer-decomposition' ? '🗂️ 从素材库选取 1 张待拆解图片' : '🗂️ 从素材库选取生图参考图',
+      'studio-t2i': '🗂️ 从素材库选图开始多图编辑',
+      video: '🗂️ 从素材库选取视频首帧 / 参考图',
+      writing: '🗂️ 从素材库选取写作配图（最多 4 张）',
+    };
+    const hintMap = {
+      studio:
+        state.mode === 'layer-decomposition'
+          ? '图层拆解模式：点击选取 1 张图片'
+          : '按点击顺序自动编号为 Image 1, Image 2...（支持多选，最多 10 张）',
+      'studio-t2i': '选中后自动切到「多图编辑」模式，按点击顺序编号为 Image 1, Image 2...',
+      video: '按点击顺序加入视频参考图（图生视频第 1 张为首帧，第 2 张为尾帧）',
+      writing: '选择 1–4 张图片附带给无审查识图模型一起创作',
+    };
+    if ($('libraryPickerTitle')) $('libraryPickerTitle').textContent = titleMap[target] || '🗂️ 从素材库选取参考图';
+    if ($('libraryPickerHint')) $('libraryPickerHint').textContent = hintMap[target] || '';
+
+    renderLibraryPicker();
+    openModal('libraryPickerModal');
+  }
+
+  function renderLibraryPicker() {
+    const grid = $('libraryPickerGrid');
+    if (!grid) return;
+
+    document.querySelectorAll('#libraryPickerFilterBar [data-picker-filter]').forEach((btn) => {
+      btn.classList.toggle('active', btn.dataset.pickerFilter === state.pickerFilter);
+    });
+
+    const maxCount = getPickerMaxCount();
+    const items = filterLibraryItems(state.pickerFilter, state.pickerSearch);
+    grid.innerHTML = '';
+
+    if (!items.length) {
+      grid.innerHTML = `
+        <div class="empty-state" style="grid-column:1/-1;padding:24px 10px;">
+          <div class="empty-orb">🗂️</div>
+          <p>${state.libraryAssets.length ? '没有匹配的素材' : '素材库暂无图片，点击右上角「＋ 上传新图」马上添加'}</p>
+        </div>`;
+    } else {
+      const existingOffset = state.pickerTarget === 'studio' && state.mode === 'edit' ? state.refs.length : 0;
+      items.forEach((asset) => {
+        const selIdx = state.pickerSelectedIds.indexOf(asset.id);
+        const card = document.createElement('div');
+        card.className = `picker-item${selIdx !== -1 ? ' selected' : ''}`;
+
+        const thumb = document.createElement('div');
+        thumb.className = 'picker-item-thumb';
+        const img = document.createElement('img');
+        img.src = getLibraryAssetUrl(asset);
+        img.alt = asset.name || '素材';
+        img.loading = 'lazy';
+        thumb.appendChild(img);
+
+        if (selIdx !== -1) {
+          const badge = document.createElement('span');
+          badge.className = 'picker-order-badge';
+          if (state.pickerTarget === 'studio' || state.pickerTarget === 'studio-t2i') {
+            badge.textContent = maxCount === 1 ? '已选' : `Image ${existingOffset + selIdx + 1}`;
+          } else {
+            badge.textContent = `#${selIdx + 1}`;
+          }
+          thumb.appendChild(badge);
+        }
+
+        const meta = document.createElement('div');
+        meta.className = 'picker-item-meta';
+        const nameEl = document.createElement('div');
+        nameEl.className = 'picker-item-name';
+        nameEl.textContent = asset.name || '未命名素材';
+        const subEl = document.createElement('div');
+        subEl.className = 'picker-item-sub';
+        subEl.textContent = asset.width && asset.height ? `${asset.width}×${asset.height}` : LIB_CATEGORY_LABELS[asset.category] || '素材';
+        meta.append(nameEl, subEl);
+
+        card.append(thumb, meta);
+        card.addEventListener('click', () => {
+          const curIdx = state.pickerSelectedIds.indexOf(asset.id);
+          if (curIdx !== -1) {
+            state.pickerSelectedIds.splice(curIdx, 1);
+          } else if (maxCount === 1) {
+            state.pickerSelectedIds = [asset.id];
+          } else if (state.pickerSelectedIds.length >= maxCount) {
+            showToast(`最多只能同时选 ${maxCount} 张`);
+            return;
+          } else {
+            state.pickerSelectedIds.push(asset.id);
+          }
+          renderLibraryPicker();
+        });
+        grid.appendChild(card);
+      });
+    }
+
+    const cnt = state.pickerSelectedIds.length;
+    const summaryEl = $('libraryPickerSummary');
+    if (summaryEl) {
+      summaryEl.textContent = cnt ? `已选择 ${cnt} 张素材` : '点击图片选择（支持多选）';
+    }
+    const clearBtn = $('libraryPickerClearBtn');
+    if (clearBtn) clearBtn.classList.toggle('hidden', cnt === 0);
+    const confirmBtn = $('libraryPickerConfirmBtn');
+    if (confirmBtn) {
+      confirmBtn.disabled = cnt === 0;
+      confirmBtn.textContent = cnt ? `确认调用 (${cnt})` : '确认调用';
+    }
+  }
+
+  function confirmLibraryPicker() {
+    const assetMap = new Map(state.libraryAssets.map((a) => [a.id, a]));
+    const selected = state.pickerSelectedIds.map((id) => assetMap.get(id)).filter(Boolean);
+    if (!selected.length) return;
+    closeModal('libraryPickerModal');
+    if (state.pickerTarget === 'studio') {
+      addLibraryAssetsToStudio(selected);
+    } else if (state.pickerTarget === 'studio-t2i') {
+      addLibraryAssetsToStudio(selected, { targetMode: 'edit', switchWorkspace: true });
+    } else if (state.pickerTarget === 'video') {
+      addLibraryAssetsToVideo(selected);
+    } else if (state.pickerTarget === 'writing') {
+      addLibraryAssetsToWriting(selected);
+    }
+    state.pickerSelectedIds = [];
+  }
+
   async function boot() {
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker
@@ -3288,11 +3957,88 @@
       }
     });
 
+    $('stageAddLibraryBtn')?.addEventListener('click', async () => {
+      const job = state.jobs.find((j) => j.id === state.activeJobId);
+      const asset = job?.assets?.[0];
+      if (!asset?.filename) return;
+      await saveOutputToLibrary(asset.filename, job.id, job.prompt || '生成作品');
+    });
+
     $('stageEditBtn').addEventListener('click', () => {
       const job = state.jobs.find((j) => j.id === state.activeJobId);
       const asset = job?.assets?.[0];
       if (asset?.filename) addLocalAssetRef(asset.filename, 'edit', asset);
     });
+
+    // Asset Library workspace & picker bindings
+    $('t2iOpenLibraryPickerBtn')?.addEventListener('click', () => openLibraryPicker('studio-t2i'));
+    $('openLibraryPickerBtn')?.addEventListener('click', () => openLibraryPicker('studio'));
+    $('openVideoLibraryPickerBtn')?.addEventListener('click', () => openLibraryPicker('video'));
+    $('openWritingLibraryPickerBtn')?.addEventListener('click', () => openLibraryPicker('writing'));
+
+    const libDropZone = $('libraryDropZone');
+    const libFileInput = $('libraryFileInput');
+    $('libraryUploadBtn')?.addEventListener('click', () => libFileInput?.click());
+    libDropZone?.addEventListener('click', () => libFileInput?.click());
+    libFileInput?.addEventListener('change', (e) => {
+      uploadFilesToLibrary(e.target.files);
+      libFileInput.value = '';
+    });
+    libDropZone?.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      libDropZone.classList.add('dragover');
+    });
+    libDropZone?.addEventListener('dragleave', () => libDropZone.classList.remove('dragover'));
+    libDropZone?.addEventListener('drop', (e) => {
+      e.preventDefault();
+      libDropZone.classList.remove('dragover');
+      uploadFilesToLibrary(e.dataTransfer?.files);
+    });
+
+    document.querySelectorAll('#libraryFilterBar [data-lib-filter]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        state.libraryFilter = btn.dataset.libFilter || 'all';
+        renderLibraryWorkspace();
+      });
+    });
+    $('librarySearchInput')?.addEventListener('input', (e) => {
+      state.librarySearch = e.target.value || '';
+      renderLibraryWorkspace();
+    });
+
+    document.querySelectorAll('#libraryPickerFilterBar [data-picker-filter]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        state.pickerFilter = btn.dataset.pickerFilter || 'all';
+        renderLibraryPicker();
+      });
+    });
+    $('libraryPickerSearch')?.addEventListener('input', (e) => {
+      state.pickerSearch = e.target.value || '';
+      renderLibraryPicker();
+    });
+    $('libraryPickerUploadBtn')?.addEventListener('click', () => $('libraryPickerFileInput')?.click());
+    $('libraryPickerFileInput')?.addEventListener('change', async (e) => {
+      const created = await uploadFilesToLibrary(e.target.files);
+      e.target.value = '';
+      if (created.length) {
+        const maxCount = getPickerMaxCount();
+        for (const item of created) {
+          if (maxCount === 1) {
+            state.pickerSelectedIds = [item.id];
+            break;
+          }
+          if (state.pickerSelectedIds.length < maxCount && !state.pickerSelectedIds.includes(item.id)) {
+            state.pickerSelectedIds.push(item.id);
+          }
+        }
+        renderLibraryPicker();
+      }
+    });
+    $('libraryPickerClearBtn')?.addEventListener('click', () => {
+      state.pickerSelectedIds = [];
+      renderLibraryPicker();
+    });
+    $('libraryPickerConfirmBtn')?.addEventListener('click', confirmLibraryPicker);
 
     $('stageVideoBtn')?.addEventListener('click', () => {
       const job = state.jobs.find((j) => j.id === state.activeJobId);
@@ -3357,12 +4103,13 @@
       }
     }
 
-    // Load initial config, generation history, and writing sessions
+    // Load initial config, generation history, writing sessions, and asset library
     try {
-      const [cfgRes, histRes, writeRes] = await Promise.all([
+      const [cfgRes, histRes, writeRes, libRes] = await Promise.all([
         apiJson('/api/config'),
         apiJson('/api/tasks'),
         apiJson('/api/writing/sessions').catch(() => ({ items: [] })),
+        apiJson('/api/library').catch(() => ({ items: [] })),
       ]);
       state.config = cfgRes;
       state.jobs = histRes.items || [];
@@ -3370,6 +4117,7 @@
       state.activeVideoJobId = state.jobs.find(isVideoJob)?.id || null;
       state.writingSessions = writeRes.items || [];
       state.activeWritingId = state.writingSessions[0]?.id || null;
+      state.libraryAssets = libRes.items || [];
 
       populateTemplateSelect($('studioTemplateSelect'), 'image', '模板：自动匹配');
       populateTemplateSelect($('videoTemplateSelect'), 'video', '模板：自动匹配');
@@ -3385,6 +4133,8 @@
       renderVideoHistory();
       renderWritingSessions();
       renderWritingMessages();
+      renderLibraryWorkspace();
+      renderQuickLibraryStrip();
       ensurePolling();
       refreshBalance();
       refreshVeniceBalance();

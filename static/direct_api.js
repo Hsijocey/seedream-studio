@@ -8,6 +8,7 @@
   const STORAGE_CFG_KEY = 'seedream_studio_cfg_v1';
   const STORAGE_JOBS_KEY = 'seedream_studio_jobs_v1';
   const STORAGE_WRITING_KEY = 'seedream_studio_writing_v1';
+  const STORAGE_LIBRARY_KEY = 'seedream_studio_library_v1';
   const IDB_NAME = 'seedream_studio_blobs_v1';
   const IDB_STORE = 'blobs';
 
@@ -1937,6 +1938,10 @@
           const fname = token.slice(6);
           const got = await resolveLocalBlobOrUrl(fname);
           items.push({ blob: got.blob, mime: got.mime, kind: 'local', localFilename: fname });
+        } else if (token.startsWith('library:')) {
+          const fname = token.slice(8);
+          const got = await resolveLocalBlobOrUrl(fname);
+          items.push({ blob: got.blob, mime: got.mime, kind: 'library', localFilename: fname });
         } else if (token.startsWith('upload:')) {
           const idx = Number(token.slice(7));
           if (idx >= 0 && idx < uploaded.length) {
@@ -1949,6 +1954,17 @@
       for (const fname of localAssets) {
         const got = await resolveLocalBlobOrUrl(String(fname));
         items.push({ blob: got.blob, mime: got.mime, kind: 'local', localFilename: String(fname) });
+      }
+      let libAssets = [];
+      try {
+        const rawLib = formData.get('library_assets');
+        if (rawLib) libAssets = JSON.parse(String(rawLib));
+      } catch {
+        libAssets = [];
+      }
+      for (const fname of libAssets) {
+        const got = await resolveLocalBlobOrUrl(String(fname));
+        items.push({ blob: got.blob, mime: got.mime, kind: 'library', localFilename: String(fname) });
       }
       for (const f of uploaded) {
         items.push({ blob: f, mime: f.type || 'image/png', kind: 'upload', localFilename: null });
@@ -2110,6 +2126,36 @@
       }
     }
     return sessions;
+  }
+
+  const VALID_LIB_CATEGORIES = new Set(['character', 'scene', 'style', 'other']);
+  function cleanLibCategory(raw) {
+    const val = String(raw || 'other').trim().toLowerCase();
+    return VALID_LIB_CATEGORIES.has(val) ? val : 'other';
+  }
+  function cleanLibName(raw, fallback) {
+    const cleaned = String(raw || '').trim().replace(/[\r\n]+/g, ' ');
+    return (cleaned ? cleaned.slice(0, 60) : String(fallback || '未命名素材').slice(0, 60)).trim() || '未命名素材';
+  }
+  function extFromMime(mime) {
+    const m = String(mime || '').toLowerCase();
+    if (m.includes('jpeg') || m.includes('jpg')) return 'jpg';
+    if (m.includes('webp')) return 'webp';
+    if (m.includes('gif')) return 'gif';
+    return 'png';
+  }
+
+  async function hydrateLibraryAssets(items) {
+    const out = [];
+    for (const item of items || []) {
+      const clone = { ...item };
+      if (clone.filename) {
+        const objUrl = await getBlobObjectUrl(clone.filename);
+        if (objUrl) clone.url = objUrl;
+      }
+      out.push(clone);
+    }
+    return out;
   }
 
   async function syncTask(localId, forceRefresh = false) {
@@ -2626,6 +2672,136 @@
       return { ok: true, job: record };
     }
 
+    if (path === '/api/library' && method === 'GET') {
+      const items = readJsonStorage(STORAGE_LIBRARY_KEY, []);
+      items.sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
+      return { ok: true, items: await hydrateLibraryAssets(items.slice(0, 300)) };
+    }
+
+    if (path === '/api/library/upload' && method === 'POST') {
+      const fd = options.body;
+      const uploaded = fd instanceof FormData ? fd.getAll('images').filter((x) => x instanceof Blob) : [];
+      if (!uploaded.length) throw makeApiError('请选择至少 1 张图片上传。', 400);
+      if (uploaded.length > 30) throw makeApiError('单次最多上传 30 张素材图片。', 400);
+
+      const category = cleanLibCategory(fd.get('category'));
+      const explicitName = String(fd.get('name') || '').trim();
+      const existingList = readJsonStorage(STORAGE_LIBRARY_KEY, []);
+      const created = [];
+
+      for (const file of uploaded) {
+        if (!file.size) continue;
+        if (file.size > 25 * 1024 * 1024) throw makeApiError(`图片 ${file.name || ''} 超过 25MB 限制。`, 400);
+        const mime = (file.type || 'image/png').toLowerCase();
+        const assetId = `lib_${randHex(12)}`;
+        const ext = extFromMime(mime);
+        const filename = `${assetId}.${ext}`;
+        const dims = await measureBlobDimensions(file).catch(() => null);
+        await idbPut(filename, file);
+        const origStem = String(file.name || '').replace(/\.[^.]+$/, '');
+        const now = new Date().toISOString();
+        const record = {
+          id: assetId,
+          filename,
+          url: '',
+          name: cleanLibName(uploaded.length === 1 ? explicitName : '', origStem || '上传素材'),
+          category,
+          source: 'upload',
+          source_job_id: null,
+          source_filename: null,
+          mime,
+          bytes: file.size,
+          width: dims?.width || null,
+          height: dims?.height || null,
+          created_at: now,
+          updated_at: now,
+        };
+        existingList.unshift(record);
+        created.push(record);
+      }
+
+      if (!created.length) throw makeApiError('未检测到有效图片文件。', 400);
+      writeJsonStorage(STORAGE_LIBRARY_KEY, existingList.slice(0, 300));
+      return { ok: true, items: await hydrateLibraryAssets(created) };
+    }
+
+    if (path === '/api/library/from-output' && method === 'POST') {
+      const body = JSON.parse(String(options.body || '{}'));
+      const sourceFilename = String(body.filename || '').trim();
+      if (!sourceFilename) throw makeApiError('缺少图片文件名', 400);
+
+      const existingList = readJsonStorage(STORAGE_LIBRARY_KEY, []);
+      const dup = existingList.find((x) => x.source_filename === sourceFilename);
+      if (dup) {
+        const [hydrated] = await hydrateLibraryAssets([dup]);
+        return { ok: true, item: hydrated, already_exists: true };
+      }
+
+      const got = await resolveLocalBlobOrUrl(sourceFilename);
+      const dims = await measureBlobDimensions(got.blob).catch(() => null);
+      const assetId = `lib_${randHex(12)}`;
+      const ext = extFromMime(got.mime);
+      const filename = `${assetId}.${ext}`;
+      await idbPut(filename, got.blob);
+
+      const jobs = readJsonStorage(STORAGE_JOBS_KEY, []);
+      const jobId = String(body.job_id || '').trim() || null;
+      const srcJob = jobId ? jobs.find((j) => j.id === jobId) : null;
+      const defaultName = srcJob?.prompt ? String(srcJob.prompt).trim().slice(0, 28) : '生成作品';
+      const now = new Date().toISOString();
+
+      const record = {
+        id: assetId,
+        filename,
+        url: '',
+        name: cleanLibName(body.name, defaultName),
+        category: cleanLibCategory(body.category || 'character'),
+        source: 'generated',
+        source_job_id: jobId,
+        source_filename: sourceFilename,
+        mime: got.mime || 'image/png',
+        bytes: got.blob.size || 0,
+        width: dims?.width || null,
+        height: dims?.height || null,
+        created_at: now,
+        updated_at: now,
+      };
+      existingList.unshift(record);
+      writeJsonStorage(STORAGE_LIBRARY_KEY, existingList.slice(0, 300));
+      const [hydrated] = await hydrateLibraryAssets([record]);
+      return { ok: true, item: hydrated, already_exists: false };
+    }
+
+    if (path.startsWith('/api/library/') && method === 'PATCH') {
+      const assetId = decodeURIComponent(path.slice('/api/library/'.length));
+      const body = JSON.parse(String(options.body || '{}'));
+      const list = readJsonStorage(STORAGE_LIBRARY_KEY, []);
+      const idx = list.findIndex((x) => x.id === assetId);
+      if (idx === -1) throw makeApiError('素材不存在', 404);
+      const cur = list[idx];
+      const updated = {
+        ...cur,
+        ...(body.name !== undefined ? { name: cleanLibName(body.name, cur.name) } : {}),
+        ...(body.category !== undefined ? { category: cleanLibCategory(body.category) } : {}),
+        updated_at: new Date().toISOString(),
+      };
+      list[idx] = updated;
+      writeJsonStorage(STORAGE_LIBRARY_KEY, list);
+      const [hydrated] = await hydrateLibraryAssets([updated]);
+      return { ok: true, item: hydrated };
+    }
+
+    if (path.startsWith('/api/library/') && method === 'DELETE') {
+      const assetId = decodeURIComponent(path.slice('/api/library/'.length));
+      const list = readJsonStorage(STORAGE_LIBRARY_KEY, []);
+      const target = list.find((x) => x.id === assetId);
+      if (!target) throw makeApiError('素材不存在', 404);
+      const remaining = list.filter((x) => x.id !== assetId);
+      writeJsonStorage(STORAGE_LIBRARY_KEY, remaining);
+      if (target.filename) await idbDelete(target.filename);
+      return { ok: true };
+    }
+
     if (path === '/api/writing/sessions' && method === 'GET') {
       const items = await hydrateWritingSessions(readJsonStorage(STORAGE_WRITING_KEY, []));
       return { ok: true, items };
@@ -2794,12 +2970,12 @@
       const attachments = [];
       for (let i = 0; i < collected.length; i += 1) {
         const item = collected[i];
-        if (item.kind === 'local' && item.localFilename) {
+        if ((item.kind === 'local' || item.kind === 'library') && item.localFilename) {
           attachments.push({
             filename: item.localFilename,
             url: (await getBlobObjectUrl(item.localFilename)) || '',
             mime: item.mime,
-            source: 'output',
+            source: item.kind === 'library' ? 'library' : 'output',
           });
         } else {
           const fname = `${batch}_${i}.jpg`;

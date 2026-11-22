@@ -15,7 +15,7 @@
   <link rel="icon" type="image/png" sizes="192x192" href="./static/icons/icon-192.png?v=20261120-icon3" />
   <link rel="icon" type="image/svg+xml" href="./static/icons/icon.svg?v=20261120-icon3" />
 
-  <link rel="stylesheet" href="./static/styles.css?v=20261120-v10" />
+  <link rel="stylesheet" href="./static/styles.css?v=20261122-v11" />
 </head>
 <body>
   <div class="app-shell">
@@ -31,6 +31,7 @@
 
       <div class="segmented-control workspace-nav" role="tablist" aria-label="工作区切换">
         <button type="button" class="seg-btn active" data-workspace="studio">🎨 生图工作台</button>
+        <button type="button" class="seg-btn" data-workspace="library">🗂️ 素材库 <span id="navLibraryCount" class="nav-mini-count hidden">0</span></button>
         <button type="button" class="seg-btn" data-workspace="video">🎬 视频生成</button>
         <button type="button" class="seg-btn" data-workspace="writing">✍️ 自由写作</button>
       </div>
@@ -81,6 +82,14 @@
           <button type="button" class="seg-btn" data-mode="layer-decomposition">图层拆解</button>
         </div>
 
+        <!-- Quick Library Shortcut in Text-to-Image mode -->
+        <div id="t2iLibraryShortcut" class="t2i-library-shortcut">
+          <span class="field-hint">想用已有角色或背景参考图？</span>
+          <button id="t2iOpenLibraryPickerBtn" type="button" class="secondary-btn small-btn library-pick-btn">
+            🗂️ 从素材库选图编辑
+          </button>
+        </div>
+
         <!-- Reference Images (Edit / Layer modes) -->
         <div id="refSection" class="field-group hidden">
           <div class="field-header">
@@ -96,6 +105,14 @@
               <span class="drop-sub">支持 PNG / JPEG / WebP（iPhone 可直接从相册选取）</span>
             </div>
           </div>
+
+          <div class="ref-library-bar">
+            <button id="openLibraryPickerBtn" type="button" class="secondary-btn small-btn library-pick-btn">
+              🗂️ 从素材库选取 <span id="studioLibBtnCount" class="count-chip">0</span>
+            </button>
+            <span class="field-hint">点击下方缩略图也可一键加入参考图</span>
+          </div>
+          <div id="studioQuickLibraryStrip" class="quick-library-strip hidden"></div>
 
           <div id="refGrid" class="ref-grid"></div>
         </div>
@@ -249,6 +266,7 @@
           <div id="stageActions" class="stage-actions hidden">
             <button id="stageSaveBtn" type="button" class="secondary-btn">⬇️ 保存原图</button>
             <button id="stageShareBtn" type="button" class="secondary-btn hidden">📲 存到手机相册</button>
+            <button id="stageAddLibraryBtn" type="button" class="secondary-btn">⭐ 加入素材库</button>
             <button id="stageEditBtn" type="button" class="secondary-btn">✏️ 送去编辑</button>
             <button id="stageVideoBtn" type="button" class="secondary-btn">🎬 送去生成视频</button>
             <button id="stageLayerBtn" type="button" class="secondary-btn">🧩 拆解图层</button>
@@ -298,6 +316,12 @@
               <span class="drop-title">点击选择或拖拽首帧 / 参考图片</span>
               <span class="drop-sub">支持从 Seedream 生图结果一键「🎬 送去生成视频」</span>
             </div>
+          </div>
+
+          <div class="ref-library-bar">
+            <button id="openVideoLibraryPickerBtn" type="button" class="secondary-btn small-btn library-pick-btn">
+              🗂️ 从素材库选取
+            </button>
           </div>
 
           <div id="videoRefGrid" class="ref-grid"></div>
@@ -543,6 +567,7 @@
           <div class="writing-input-row">
             <input id="writingFileInput" type="file" accept="image/*" multiple class="hidden" />
             <button id="writingAttachBtn" type="button" class="secondary-btn writing-icon-btn" title="上传参考图（最多 4 张，模型可直接看图）">🖼️ 配图</button>
+            <button id="openWritingLibraryPickerBtn" type="button" class="secondary-btn writing-icon-btn" title="从素材库选取参考图">🗂️ 素材库</button>
             <textarea id="writingInput" rows="2" placeholder="输入创作要求、剧情走向或针对配图提问...（Enter 换行，Ctrl/⌘+Enter 发送）"></textarea>
             <button id="writingSendBtn" type="button" class="primary-btn writing-send-btn">
               <span class="btn-spinner hidden" id="writingSpinner"></span>
@@ -550,6 +575,55 @@
             </button>
           </div>
         </div>
+      </section>
+    </main>
+
+    <!-- Personal Asset Library Workspace -->
+    <main id="libraryView" class="library-shell hidden">
+      <section class="panel library-panel">
+        <div class="library-head">
+          <div>
+            <h2 class="stage-title" style="display:flex;align-items:center;gap:8px;">
+              🗂️ 个人素材库 <span id="libraryTotalCount" class="count-chip">0</span>
+            </h2>
+            <p class="stage-subtitle">上传常用人物、场景或风格参考图，也可将生成的图片一键收藏到这里；在生图、视频和写作中随时直接调用。</p>
+          </div>
+          <div class="library-upload-controls">
+            <select id="libraryUploadCategory" class="mini-select" title="新上传素材默认分类">
+              <option value="character">分类：人物 / 角色</option>
+              <option value="scene">分类：场景 / 背景</option>
+              <option value="style">分类：风格 / 道具</option>
+              <option value="other">分类：其他素材</option>
+            </select>
+            <button id="libraryUploadBtn" type="button" class="primary-btn small-btn">＋ 上传素材图片</button>
+          </div>
+        </div>
+
+        <div id="libraryDropZone" class="drop-zone library-dropzone">
+          <input id="libraryFileInput" type="file" accept="image/*" multiple hidden />
+          <div class="drop-zone-inner">
+            <span class="drop-icon">📥</span>
+            <span class="drop-title">点击选择或拖拽多张图片上传到素材库</span>
+            <span class="drop-sub">支持 PNG / JPEG / WebP（iPhone 可直接多选相册照片 · 原图尺寸完整保留，便于防变形锁定）</span>
+          </div>
+        </div>
+
+        <div class="library-toolbar">
+          <div id="libraryFilterBar" class="chip-row library-filter-chips">
+            <button type="button" class="chip-btn active" data-lib-filter="all">全部</button>
+            <button type="button" class="chip-btn" data-lib-filter="character">人物 / 角色</button>
+            <button type="button" class="chip-btn" data-lib-filter="scene">场景 / 背景</button>
+            <button type="button" class="chip-btn" data-lib-filter="style">风格 / 道具</button>
+            <button type="button" class="chip-btn" data-lib-filter="generated">⭐ 生成收藏</button>
+            <button type="button" class="chip-btn" data-lib-filter="upload">📤 我的上传</button>
+          </div>
+          <div class="library-search-wrap">
+            <input id="librarySearchInput" type="text" placeholder="搜索素材名称..." />
+          </div>
+        </div>
+
+        <p id="libraryError" class="error-banner hidden"></p>
+        <div id="libraryGrid" class="library-grid"></div>
       </section>
     </main>
   </div>
@@ -801,6 +875,42 @@
     </div>
   </div>
 
+  <!-- Library Quick-Picker Modal -->
+  <div id="libraryPickerModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="libraryPickerTitle">
+    <div class="modal-card wide-modal library-picker-card">
+      <div class="modal-head">
+        <h3 id="libraryPickerTitle">🗂️ 从素材库选取参考图</h3>
+        <button type="button" class="icon-close" data-close="libraryPickerModal">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="library-picker-top">
+          <div id="libraryPickerFilterBar" class="chip-row library-filter-chips">
+            <button type="button" class="chip-btn active" data-picker-filter="all">全部</button>
+            <button type="button" class="chip-btn" data-picker-filter="character">人物</button>
+            <button type="button" class="chip-btn" data-picker-filter="scene">场景</button>
+            <button type="button" class="chip-btn" data-picker-filter="style">风格</button>
+            <button type="button" class="chip-btn" data-picker-filter="generated">生成收藏</button>
+          </div>
+          <div class="library-picker-actions">
+            <input id="libraryPickerSearch" type="text" placeholder="搜索素材..." />
+            <input id="libraryPickerFileInput" type="file" accept="image/*" multiple hidden />
+            <button id="libraryPickerUploadBtn" type="button" class="secondary-btn small-btn">＋ 上传新图</button>
+          </div>
+        </div>
+        <p id="libraryPickerHint" class="field-hint" style="margin: 0 0 10px;">按点击顺序自动编号为 Image 1, Image 2...（支持多选）</p>
+        <div id="libraryPickerGrid" class="library-picker-grid"></div>
+      </div>
+      <div class="modal-foot library-picker-foot">
+        <span id="libraryPickerSummary" class="field-hint">尚未选择素材</span>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <button id="libraryPickerClearBtn" type="button" class="ghost-btn small-btn hidden">清空已选</button>
+          <button type="button" class="ghost-btn small-btn" data-close="libraryPickerModal">取消</button>
+          <button id="libraryPickerConfirmBtn" type="button" class="primary-btn small-btn" disabled>确认调用</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Lightbox Modal for Mobile/Desktop Zoom & Long-press save -->
   <div id="lightboxModal" class="modal-backdrop hidden" role="dialog" aria-modal="true">
     <div class="lightbox-wrap">
@@ -810,7 +920,9 @@
     </div>
   </div>
 
-  <script src="./static/direct_api.js?v=20261120-v10"></script>
-  <script src="./static/app.js?v=20261120-v10"></script>
+  <div id="studioToast" class="studio-toast hidden" role="status" aria-live="polite"></div>
+
+  <script src="./static/direct_api.js?v=20261122-v11"></script>
+  <script src="./static/app.js?v=20261122-v11"></script>
 </body>
 </html>
